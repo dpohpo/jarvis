@@ -1,0 +1,24 @@
+{
+  "name": "@jarvis/relay",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/server.ts",
+    "test": "echo 'covered by e2e' "
+  },
+  "dependencies": {
+    "@jarvis/protocol": "workspace:*",
+    "better-sqlite3": "^11.8.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

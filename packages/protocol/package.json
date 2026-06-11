@@ -1,0 +1,25 @@
+{
+  "name": "@jarvis/protocol",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit false --emitDeclarationOnly",
+    "test": "node --test dist/test/"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "^0.7.15",
+    "ulid": "^3.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/libsodium-wrappers": "^0.7.14",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}

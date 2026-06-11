@@ -1,0 +1,17 @@
+{
+  "name": "jarvis",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Jarvis — control all computer agents from your phone. E2E encrypted, zero-knowledge relay.",
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' run build",
+    "typecheck": "pnpm -r --filter './packages/**' run typecheck",
+    "test": "pnpm -r --filter './packages/**' run test",
+    "relay": "pnpm --filter @jarvis/relay start",
+    "daemon": "pnpm --filter @jarvis/daemon start"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@11.5.3"
+}

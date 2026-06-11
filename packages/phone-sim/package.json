@@ -1,0 +1,22 @@
+{
+  "name": "@jarvis/phone-sim",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/index.ts",
+    "test": "echo 'covered by e2e'"
+  },
+  "dependencies": {
+    "@jarvis/protocol": "workspace:*",
+    "ulid": "^3.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
