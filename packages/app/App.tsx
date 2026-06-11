@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -16,6 +15,12 @@ import {
   TextInput,
   View,
 } from "react-native";
+// RN's KeyboardAvoidingView breaks under Android edge-to-edge (SDK 53+);
+// keyboard-controller's drop-in works on both platforms.
+import {
+  KeyboardAvoidingView,
+  KeyboardProvider,
+} from "react-native-keyboard-controller";
 import { StatusBar } from "expo-status-bar";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import type { PermRequest, TaskEvent } from "@jarvis/protocol";
@@ -30,6 +35,14 @@ interface LogLine {
 }
 
 export default function App() {
+  return (
+    <KeyboardProvider>
+      <Main />
+    </KeyboardProvider>
+  );
+}
+
+function Main() {
   const [booted, setBooted] = useState(false);
   const [state, setState] = useState<PhoneState | null>(null);
   const [scanning, setScanning] = useState(false);
@@ -206,10 +219,7 @@ export default function App() {
 
   // ---------- console screen ----------
   return (
-    <KeyboardAvoidingView
-      style={styles.root}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
-    >
+    <KeyboardAvoidingView style={styles.root} behavior="padding">
       <StatusBar style="light" />
       <View style={styles.header}>
         <View style={[styles.dot, { backgroundColor: linkUp ? "#7FD1AE" : "#E0635C" }]} />
