@@ -35,6 +35,10 @@ export interface JarvisCallbacks {
   onPermRequest: (r: PermRequest) => void;
   onTaskState: (tasks: TaskSummary[]) => void;
   onLink: (up: boolean) => void;
+  /** What the daemon heard us say (final transcription). */
+  onAsrFinal?: (text: string) => void;
+  /** Complete TTS reply assembled — base64 chunks of one audio file. */
+  onTtsReady?: (chunksB64: string[], mime: string) => void;
 }
 
 /** Scan result → paired PhoneState. Resolves once the daemon accepts. */
@@ -103,6 +107,9 @@ export class JarvisClient {
   private relay: RelayClient;
   private outbox: Outbox<Payload>;
   private inbox = new Inbox();
+  private voiceSeq = 0;
+  private ttsChunks: string[] = [];
+  private ttsMime = "audio/wav";
 
   constructor(
     private state: PhoneState,
@@ -160,6 +167,38 @@ export class JarvisClient {
     this.send({ t: "task.list", seq: 0 } as never);
   }
 
+  // ---- voice ------------------------------------------------------------------
+
+  startVoice(): void {
+    this.voiceSeq = 0;
+    this.sendVoice({ t: "voice.start", seq: 0, fmt: "pcm16k" });
+  }
+
+  sendVoiceChunk(dataB64: string): void {
+    this.voiceSeq += 1;
+    this.sendVoice({ t: "voice.chunk", seq: this.voiceSeq, data: dataB64 });
+  }
+
+  endVoice(): void {
+    this.sendVoice({ t: "voice.end", seq: this.voiceSeq + 1 });
+  }
+
+  /** Voice family: fire-and-forget, kind:"voice", bypasses the reliable channel. */
+  private sendVoice(p: Payload): void {
+    this.relay.send(
+      sealPayload(p, {
+        room: this.state.room,
+        from: this.state.deviceId,
+        to: this.state.daemonDeviceId,
+        kind: "voice",
+        peer: {
+          theirBoxPublic: fromB64(this.state.daemonBoxPub),
+          myBoxPrivate: fromB64(this.state.boxPriv),
+        },
+      }),
+    );
+  }
+
   private send(p: Payload & { seq: number }): void {
     p.seq = this.outbox.add(p);
     this.state.sentSeq = p.seq;
@@ -178,6 +217,25 @@ export class JarvisClient {
   }
 
   private handle(payload: Payload): void {
+    // TTS stream bypasses the reliable channel
+    switch (payload.t) {
+      case "tts.start":
+        this.ttsChunks = [];
+        this.ttsMime = payload.mime;
+        return;
+      case "tts.chunk":
+        this.ttsChunks.push(payload.data);
+        return;
+      case "tts.end":
+        if (this.ttsChunks.length) {
+          this.cb.onTtsReady?.(this.ttsChunks, this.ttsMime);
+          this.ttsChunks = [];
+        }
+        return;
+      default:
+        break;
+    }
+
     if ("seq" in payload && payload.t !== "hello") {
       if (payload.seq <= this.state.lastSeq || !this.inbox.accept(payload.seq)) return;
       this.state.lastSeq = Math.max(this.state.lastSeq, payload.seq);
@@ -193,6 +251,9 @@ export class JarvisClient {
         break;
       case "task.state":
         this.cb.onTaskState(payload.tasks);
+        break;
+      case "asr.final":
+        this.cb.onAsrFinal?.(payload.text);
         break;
       default:
         break;

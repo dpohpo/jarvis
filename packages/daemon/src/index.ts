@@ -26,6 +26,7 @@ import {
   cryptoReady,
   fromB64,
   openPayload,
+  randomId,
   sealPayload,
   sealOpen,
   toB64,
@@ -44,6 +45,8 @@ import {
 import { TaskStore } from "./tasks/store.js";
 import { runClaudeCode } from "./executors/claude-code.js";
 import { ApprovalBroker, classifyCommand } from "./approval.js";
+import { pcm16ToWav } from "./voice/wav.js";
+import { ensureAsrSidecar, synthesizeAny, transcribeAny } from "./voice/local.js";
 
 const RELAY_URL = process.env.JARVIS_RELAY_URL ?? "ws://127.0.0.1:8787";
 const ADMIN_PORT = Number(process.env.JARVIS_ADMIN_PORT ?? 8788);
@@ -58,6 +61,7 @@ const room = roomOf(state);
 const store = new TaskStore();
 store.markOrphans();
 const approvals = new ApprovalBroker();
+ensureAsrSidecar();
 
 const log = (msg: string) => console.log(`[daemon] ${msg}`);
 
@@ -108,6 +112,77 @@ function broadcast(payloadOf: () => Payload & { seq: number }): void {
   for (const dev of state.devices) sendTo(dev.deviceId, payloadOf());
 }
 
+/** Fire-and-forget voice-family send: own stream seq, kind:"voice", no outbox. */
+function sendVoiceTo(deviceId: string, payload: Payload): void {
+  const keys = peerKeys(deviceId);
+  if (!keys) return;
+  relay.send(
+    sealPayload(payload, {
+      room,
+      from: state.deviceId,
+      to: deviceId,
+      kind: "voice",
+      peer: keys,
+    }),
+  );
+}
+
+// ---- voice sessions ---------------------------------------------------------
+
+const voiceBuffers = new Map<string, Uint8Array[]>();
+
+async function speakTo(deviceId: string, text: string): Promise<void> {
+  try {
+    const wav = await synthesizeAny(text);
+    if (!wav) return;
+    sendVoiceTo(deviceId, { t: "tts.start", seq: 0, mime: "audio/wav" });
+    const CHUNK = 48 * 1024;
+    let seq = 0;
+    for (let off = 0; off < wav.length; off += CHUNK) {
+      seq += 1;
+      sendVoiceTo(deviceId, {
+        t: "tts.chunk",
+        seq,
+        data: Buffer.from(wav.subarray(off, off + CHUNK)).toString("base64"),
+      });
+    }
+    sendVoiceTo(deviceId, { t: "tts.end", seq: seq + 1 });
+    log(`tts → ${deviceId}: ${wav.length} bytes in ${seq} chunks`);
+  } catch (e) {
+    log(`tts failed: ${String(e)}`);
+  }
+}
+
+async function handleVoiceEnd(from: string): Promise<void> {
+  const parts = voiceBuffers.get(from) ?? [];
+  voiceBuffers.delete(from);
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  if (total < 3200) {
+    // <0.1s of audio — accidental tap
+    return;
+  }
+  const pcm = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) {
+    pcm.set(p, off);
+    off += p.length;
+  }
+  log(`voice from ${from}: ${(total / 32000).toFixed(1)}s audio, transcribing…`);
+  try {
+    const text = await transcribeAny(pcm16ToWav(pcm));
+    if (!text) {
+      sendTo(from, { t: "asr.final", seq: 0, text: "" });
+      void speakTo(from, "抱歉，我没有听清。");
+      return;
+    }
+    sendTo(from, { t: "asr.final", seq: 0, text });
+    await handleCmd(from, randomId(), text, undefined, { voiceReply: true });
+  } catch (e) {
+    log(`asr failed: ${String(e)}`);
+    void speakTo(from, "语音识别出错了。");
+  }
+}
+
 // ---- task execution --------------------------------------------------------
 
 const running = new Map<string, { kill: () => void }>();
@@ -123,7 +198,13 @@ function taskSummaries(): TaskSummary[] {
   }));
 }
 
-async function handleCmd(from: string, cmdId: string, text: string, workdir?: string): Promise<void> {
+async function handleCmd(
+  from: string,
+  cmdId: string,
+  text: string,
+  workdir?: string,
+  opts?: { voiceReply?: boolean },
+): Promise<void> {
   const wd = workdir ?? state.workdir;
   const verdict = classifyCommand(text, wd);
   const taskId = ulid();
@@ -168,14 +249,34 @@ async function handleCmd(from: string, cmdId: string, text: string, workdir?: st
     onEvent: (e) => emit(e.ev, e.data),
   });
   running.set(taskId, task);
-  const { ok } = await task.done;
+  const { ok, result } = await task.done;
   running.delete(taskId);
   store.setStatus(taskId, ok ? "done" : "error");
+  if (opts?.voiceReply) {
+    void speakTo(from, ok ? result || "完成了。" : `出错了：${result.slice(0, 200)}`);
+  }
 }
 
 // ---- payload routing --------------------------------------------------------
 
 function handlePayload(from: string, payload: Payload): void {
+  // voice family bypasses the reliable channel entirely
+  switch (payload.t) {
+    case "voice.start":
+      voiceBuffers.set(from, []);
+      return;
+    case "voice.chunk": {
+      const buf = voiceBuffers.get(from);
+      if (buf) buf.push(new Uint8Array(Buffer.from(payload.data, "base64")));
+      return;
+    }
+    case "voice.end":
+      void handleVoiceEnd(from);
+      return;
+    default:
+      break;
+  }
+
   const ch = channelFor(from);
   if ("seq" in payload && payload.t !== "hello") {
     if (!ch.inbox.accept(payload.seq)) return; // duplicate

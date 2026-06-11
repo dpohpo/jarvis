@@ -87,6 +87,52 @@ export const Ack = z.object({
   upTo: z.number().int(),
 });
 
+// ---- voice family ----------------------------------------------------------
+// Voice payloads travel in kind:"voice" envelopes: fire-and-forget, never
+// queued for offline devices, and BYPASS the Outbox/Inbox reliable channel.
+// Their `seq` is a per-stream position counter, not a channel sequence.
+
+export const VoiceStart = z.object({
+  t: z.literal("voice.start"),
+  seq: z.number().int(),
+  fmt: z.literal("pcm16k"), // 16kHz mono signed 16-bit LE
+});
+
+export const VoiceChunk = z.object({
+  t: z.literal("voice.chunk"),
+  seq: z.number().int(),
+  data: z.string(), // base64 PCM
+});
+
+export const VoiceEnd = z.object({
+  t: z.literal("voice.end"),
+  seq: z.number().int(),
+});
+
+/** Daemon → phone: what we heard (reliable msg, shows in transcript). */
+export const AsrFinal = z.object({
+  t: z.literal("asr.final"),
+  seq: z.number().int(),
+  text: z.string(),
+});
+
+export const TtsStart = z.object({
+  t: z.literal("tts.start"),
+  seq: z.number().int(),
+  mime: z.string(), // e.g. "audio/wav"
+});
+
+export const TtsChunk = z.object({
+  t: z.literal("tts.chunk"),
+  seq: z.number().int(),
+  data: z.string(), // base64 audio
+});
+
+export const TtsEnd = z.object({
+  t: z.literal("tts.end"),
+  seq: z.number().int(),
+});
+
 /** Pairing: sent as a sealed box to the daemon, NOT as a regular peer message. */
 export const PairRequest = z.object({
   t: z.literal("pair.request"),
@@ -112,6 +158,23 @@ export const Payload = z.discriminatedUnion("t", [
   TaskState,
   Ack,
   PairAccept,
+  VoiceStart,
+  VoiceChunk,
+  VoiceEnd,
+  AsrFinal,
+  TtsStart,
+  TtsChunk,
+  TtsEnd,
+]);
+
+/** Payload types that bypass the reliable channel (own stream seq, kind:"voice"). */
+export const VOICE_FAMILY = new Set([
+  "voice.start",
+  "voice.chunk",
+  "voice.end",
+  "tts.start",
+  "tts.chunk",
+  "tts.end",
 ]);
 
 export type Payload = z.infer<typeof Payload>;
@@ -124,3 +187,10 @@ export type TaskSummary = z.infer<typeof TaskSummary>;
 export type PairRequest = z.infer<typeof PairRequest>;
 export type PairAccept = z.infer<typeof PairAccept>;
 export type HelloPayload = z.infer<typeof HelloPayload>;
+export type VoiceStart = z.infer<typeof VoiceStart>;
+export type VoiceChunk = z.infer<typeof VoiceChunk>;
+export type VoiceEnd = z.infer<typeof VoiceEnd>;
+export type AsrFinal = z.infer<typeof AsrFinal>;
+export type TtsStart = z.infer<typeof TtsStart>;
+export type TtsChunk = z.infer<typeof TtsChunk>;
+export type TtsEnd = z.infer<typeof TtsEnd>;

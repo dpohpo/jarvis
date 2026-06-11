@@ -8,6 +8,7 @@ import {
   Alert,
   FlatList,
   Modal,
+  PermissionsAndroid,
   Platform,
   Pressable,
   StyleSheet,
@@ -27,6 +28,7 @@ import type { PermRequest, TaskEvent } from "@jarvis/protocol";
 import { ensureCrypto } from "./src/crypto-init";
 import { JarvisClient, pairWithDaemon, type PairInfo } from "./src/client";
 import { clearState, loadState, saveState, type PhoneState } from "./src/store";
+import { playTtsWav, startCapture, stopCapture } from "./src/voice";
 
 interface LogLine {
   id: string;
@@ -53,9 +55,12 @@ function Main() {
   const [input, setInput] = useState("");
   const [lines, setLines] = useState<LogLine[]>([]);
   const [perm, setPerm] = useState<PermRequest | null>(null);
+  const [recording, setRecording] = useState(false);
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const client = useRef<JarvisClient | null>(null);
   const scanned = useRef(false);
+  const pressStart = useRef(0);
+  const recMode = useRef<"hold" | "tap" | null>(null);
 
   const pushLine = useCallback((kind: LogLine["kind"], text: string) => {
     setLines((prev) => [
@@ -86,6 +91,10 @@ function Main() {
         else if (e.ev === "progress") pushLine("progress", e.data);
       },
       onPermRequest: setPerm,
+      onAsrFinal: (text) => pushLine("local", text ? `🎤 ${text}` : "🎤 (没听清)"),
+      onTtsReady: (chunks) => {
+        void playTtsWav(chunks).catch((e) => pushLine("error", `播放失败: ${e}`));
+      },
       onTaskState: (tasks) => {
         pushLine(
           "local",
@@ -131,6 +140,48 @@ function Main() {
     client.current.submitCommand(text);
     setInput("");
   }, [input, pushLine]);
+
+  const beginRecording = useCallback(async () => {
+    if (!client.current) return false;
+    if (Platform.OS === "android") {
+      const r = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO!,
+      );
+      if (r !== PermissionsAndroid.RESULTS.GRANTED) return false;
+    }
+    client.current.startVoice();
+    const ok = await startCapture((b64) => client.current?.sendVoiceChunk(b64));
+    if (ok) setRecording(true);
+    return ok;
+  }, []);
+
+  const finishRecording = useCallback(async () => {
+    recMode.current = null;
+    setRecording(false);
+    await stopCapture();
+    client.current?.endVoice();
+  }, []);
+
+  const onMicPressIn = useCallback(async () => {
+    if (recording && recMode.current === "tap") {
+      // second tap ends a tap-mode recording
+      await finishRecording();
+      return;
+    }
+    pressStart.current = Date.now();
+    recMode.current = "hold";
+    await beginRecording();
+  }, [recording, beginRecording, finishRecording]);
+
+  const onMicPressOut = useCallback(async () => {
+    if (!recording && recMode.current === null) return;
+    if (Date.now() - pressStart.current < 350) {
+      // quick tap → switch to tap mode, keep recording until next tap
+      recMode.current = "tap";
+      return;
+    }
+    if (recMode.current === "hold") await finishRecording();
+  }, [recording, finishRecording]);
 
   if (!booted) {
     return (
@@ -248,7 +299,22 @@ function Main() {
         contentContainerStyle={{ paddingBottom: 12 }}
       />
 
+      {recording && (
+        <View style={styles.recBanner}>
+          <View style={styles.recDot} />
+          <Text style={styles.recText}>
+            {recMode.current === "tap" ? "录音中 — 再按一下麦克风结束" : "录音中 — 松开发送"}
+          </Text>
+        </View>
+      )}
       <View style={styles.inputRow}>
+        <Pressable
+          style={[styles.micBtn, recording && styles.micBtnActive]}
+          onPressIn={() => void onMicPressIn()}
+          onPressOut={() => void onMicPressOut()}
+        >
+          <Text style={styles.btnText}>{recording ? "⏺" : "🎙"}</Text>
+        </Pressable>
         <TextInput
           style={styles.input}
           value={input}
@@ -385,6 +451,29 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     justifyContent: "center",
   },
+  micBtn: {
+    backgroundColor: "#1E2B36",
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    justifyContent: "center",
+  },
+  micBtnActive: {
+    backgroundColor: "#5A2330",
+  },
+  recBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+  },
+  recDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#E0635C",
+  },
+  recText: { color: "#E0635C", fontSize: 13 },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "#000000AA",

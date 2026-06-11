@@ -112,6 +112,69 @@ if (command === "pair") {
     console.error("配对超时");
     process.exit(1);
   }, 15_000);
+} else if (command === "voice") {
+  // Simulate the phone's voice path: stream a 16kHz mono PCM16 WAV as
+  // voice chunks, then print asr.final and save the TTS reply to /tmp.
+  const s = load();
+  const wav = readFileSync(arg);
+  const pcm = wav.subarray(44); // assume canonical 44-byte header
+  const ttsParts: Buffer[] = [];
+
+  const client = makeClient(s, (payload) => {
+    switch (payload.t) {
+      case "asr.final":
+        console.log(`🎤 识别结果: ${payload.text || "(空)"}`);
+        break;
+      case "task.event": {
+        const tag = payload.ev.toUpperCase().padEnd(9);
+        console.log(`  [${tag}] ${payload.data.slice(0, 500)}`);
+        break;
+      }
+      case "tts.start":
+        ttsParts.length = 0;
+        break;
+      case "tts.chunk":
+        ttsParts.push(Buffer.from(payload.data, "base64"));
+        break;
+      case "tts.end": {
+        const out = Buffer.concat(ttsParts);
+        writeFileSync("/tmp/jarvis-tts-reply.wav", out);
+        console.log(`🔊 TTS回复已保存: /tmp/jarvis-tts-reply.wav (${out.length} bytes)`);
+        client.stop();
+        process.exit(0);
+      }
+      default:
+        break;
+    }
+  });
+
+  function sendVoice(p: Record<string, unknown>): void {
+    const env = sealPayload(p as never, {
+      room: s.room,
+      from: s.deviceId,
+      to: s.daemonDeviceId,
+      kind: "voice",
+      peer: { theirBoxPublic: fromB64(s.daemonBoxPub), myBoxPrivate: fromB64(s.boxPriv) },
+    });
+    client.send(env);
+  }
+
+  client.start();
+  awaitUp(client).then(() => {
+    console.log(`📤 流式发送语音: ${arg} (${pcm.length} bytes PCM)`);
+    sendVoice({ t: "voice.start", seq: 0, fmt: "pcm16k" });
+    const CHUNK = 32 * 1024;
+    let seq = 0;
+    for (let off = 0; off < pcm.length; off += CHUNK) {
+      seq += 1;
+      sendVoice({ t: "voice.chunk", seq, data: pcm.subarray(off, off + CHUNK).toString("base64") });
+    }
+    sendVoice({ t: "voice.end", seq: seq + 1 });
+  });
+  setTimeout(() => {
+    console.error("语音回路超时(300s)");
+    process.exit(1);
+  }, 300_000);
 } else if (command === "cmd" || command === "cmd-approve" || command === "tasks") {
   const s = load();
   const outbox = new Outbox<Payload>(s.sentSeq ?? 0);
