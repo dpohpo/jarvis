@@ -174,6 +174,12 @@ export class JarvisClient {
     this.send({ t: "task.list", seq: 0 } as never);
   }
 
+  /** Stop a task (or everything if taskId omitted). Goes through the reliable
+   *  channel (seq via outbox) — a bare seq:0 would be dropped as a duplicate. */
+  stopTask(taskId?: string): void {
+    this.send({ t: "task.stop", seq: 0, taskId } as never);
+  }
+
   // ---- voice ------------------------------------------------------------------
 
   startVoice(): void {

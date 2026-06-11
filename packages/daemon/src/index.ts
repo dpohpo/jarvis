@@ -240,8 +240,11 @@ async function handleVoiceEnd(from: string): Promise<void> {
     // task: short spoken ack first, then execute with spoken result
     remember(from, "assistant", decision.reply || "好的。");
     void speakTo(from, decision.reply || "好的，这就去办。");
-    await handleCmd(from, randomId(), decision.task || text, undefined, {
-      voiceReply: true,
+    enqueueCmd({
+      from,
+      cmdId: randomId(),
+      text: decision.task || text,
+      opts: { voiceReply: true },
     });
   } catch (e) {
     log(`asr failed: ${String(e)}`);
@@ -249,9 +252,73 @@ async function handleVoiceEnd(from: string): Promise<void> {
   }
 }
 
-// ---- task execution --------------------------------------------------------
+// ---- task execution (serial queue, one at a time) --------------------------
 
-const running = new Map<string, { kill: () => void }>();
+interface QueueItem {
+  from: string;
+  cmdId: string;
+  text: string;
+  workdir?: string;
+  opts?: { voiceReply?: boolean };
+  /** Assigned when the task actually starts; lets stop target a queued item. */
+  taskId: string;
+}
+
+const cmdQueue: QueueItem[] = [];
+let active: { taskId: string; from: string; kill: () => void } | null = null;
+let draining = false;
+/** taskIds the user asked to stop before they even started running. */
+const cancelled = new Set<string>();
+
+/** Enqueue a command. Runs immediately if idle, otherwise queues (FIFO). */
+function enqueueCmd(item: Omit<QueueItem, "taskId">): string {
+  const taskId = ulid();
+  const full: QueueItem = { ...item, taskId };
+  cmdQueue.push(full);
+  const ahead = cmdQueue.length - 1 + (active ? 1 : 0);
+  if (ahead > 0) {
+    sendTo(item.from, {
+      t: "task.event",
+      seq: 0,
+      taskId,
+      cmdId: item.cmdId,
+      ev: "progress",
+      data: `已排队（前面还有 ${ahead} 个任务）`,
+      ts: Date.now(),
+    });
+  }
+  void drainQueue();
+  return taskId;
+}
+
+async function drainQueue(): Promise<void> {
+  if (draining) return;
+  draining = true;
+  while (cmdQueue.length) {
+    const item = cmdQueue.shift()!;
+    if (cancelled.delete(item.taskId)) continue; // stopped while queued
+    await runOneCmd(item);
+  }
+  draining = false;
+}
+
+/** Stop a specific task (running or queued), or everything if taskId omitted. */
+function stopTask(taskId?: string): void {
+  if (!taskId) {
+    cmdQueue.forEach((q) => cancelled.add(q.taskId));
+    cmdQueue.length = 0;
+    if (active) active.kill();
+    log("stop: killed active + cleared queue");
+    return;
+  }
+  if (active?.taskId === taskId) {
+    active.kill();
+    log(`stop: killed active task ${taskId}`);
+  } else if (cmdQueue.some((q) => q.taskId === taskId)) {
+    cancelled.add(taskId);
+    log(`stop: cancelled queued task ${taskId}`);
+  }
+}
 
 function taskSummaries(): TaskSummary[] {
   return store.list().map((t) => ({
@@ -264,16 +331,10 @@ function taskSummaries(): TaskSummary[] {
   }));
 }
 
-async function handleCmd(
-  from: string,
-  cmdId: string,
-  text: string,
-  workdir?: string,
-  opts?: { voiceReply?: boolean },
-): Promise<void> {
+async function runOneCmd(item: QueueItem): Promise<void> {
+  const { from, cmdId, text, workdir, opts, taskId } = item;
   const wd = workdir ?? state.workdir;
   const verdict = classifyCommand(text, wd);
-  const taskId = ulid();
   store.create(taskId, text.slice(0, 120), wd);
   log(`cmd ${cmdId} → task ${taskId} (tier ${verdict.tier}: ${verdict.reason})`);
 
@@ -314,9 +375,9 @@ async function handleCmd(
     onSessionId: (sid) => store.setAgentSession(taskId, sid),
     onEvent: (e) => emit(e.ev, e.data),
   });
-  running.set(taskId, task);
+  active = { taskId, from, kill: task.kill };
   const { ok, result } = await task.done;
-  running.delete(taskId);
+  active = null;
   store.setStatus(taskId, ok ? "done" : "error");
   if (opts?.voiceReply) {
     const spoken = ok ? result || "完成了。" : `出错了：${result.slice(0, 200)}`;
@@ -367,7 +428,10 @@ function handlePayload(from: string, payload: Payload): void {
       ch.outbox.ackUpTo(payload.upTo);
       break;
     case "cmd.submit":
-      void handleCmd(from, payload.cmdId, payload.text, payload.workdir);
+      enqueueCmd({ from, cmdId: payload.cmdId, text: payload.text, workdir: payload.workdir });
+      break;
+    case "task.stop":
+      stopTask(payload.taskId);
       break;
     case "perm.response":
       if (!approvals.settle(payload.reqId, payload.decision === "allow")) {

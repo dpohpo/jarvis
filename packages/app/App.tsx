@@ -57,6 +57,7 @@ function Main() {
   const [perm, setPerm] = useState<PermRequest | null>(null);
   const [recording, setRecording] = useState(false);
   const [convMode, setConvMode] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const client = useRef<JarvisClient | null>(null);
   const scanned = useRef(false);
@@ -93,6 +94,11 @@ function Main() {
         else if (e.ev === "error") pushLine("error", e.data);
         else if (e.ev === "tool_use") pushLine("tool_use", `⚙ ${e.data}`);
         else if (e.ev === "progress") pushLine("progress", e.data);
+        // a real task (not a chat reply) is running between started and done/error
+        if (e.ev === "started") setBusy(true);
+        else if (e.ev === "done" || e.ev === "error") {
+          if (!e.taskId.startsWith("chat-")) setBusy(false);
+        }
       },
       onPermRequest: setPerm,
       onAsrFinal: (text) => pushLine("local", text ? `🎤 ${text}` : "🎤 (没听清)"),
@@ -349,6 +355,22 @@ function Main() {
           </Text>
         </View>
       )}
+      {busy && (
+        <View style={styles.recBanner}>
+          <ActivityIndicator size="small" color="#7FD1AE" />
+          <Text style={[styles.recText, { color: "#7FD1AE", flex: 1 }]}>任务执行中…</Text>
+          <Pressable
+            style={styles.stopBtn}
+            onPress={() => {
+              client.current?.stopTask();
+              setBusy(false);
+              pushLine("local", "🛑 已发送停止");
+            }}
+          >
+            <Text style={[styles.btnText, { color: "#E0635C", fontSize: 14 }]}>⏹ 停止</Text>
+          </Pressable>
+        </View>
+      )}
       <View style={styles.inputRow}>
         <Pressable
           style={[styles.micBtn, recording && styles.micBtnActive]}
@@ -516,6 +538,12 @@ const styles = StyleSheet.create({
     backgroundColor: "#E0635C",
   },
   recText: { color: "#E0635C", fontSize: 13 },
+  stopBtn: {
+    backgroundColor: "#3A2F31",
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+  },
   modalBackdrop: {
     flex: 1,
     backgroundColor: "#000000AA",

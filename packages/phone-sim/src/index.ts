@@ -175,6 +175,30 @@ if (command === "pair") {
     console.error("语音回路超时(300s)");
     process.exit(1);
   }, 300_000);
+} else if (command === "stop") {
+  // tsx src/index.ts stop [taskId]   (no id = stop everything)
+  const s = load();
+  const outbox = new Outbox<Payload>(s.sentSeq ?? 0);
+  const client = makeClient(s, () => {});
+  function sendP(p: Payload & { seq: number }): void {
+    p.seq = outbox.add(p);
+    s.sentSeq = p.seq;
+    save(s);
+    client.send(
+      sealPayload(p, {
+        room: s.room,
+        from: s.deviceId,
+        to: s.daemonDeviceId,
+        peer: { theirBoxPublic: fromB64(s.daemonBoxPub), myBoxPrivate: fromB64(s.boxPriv) },
+      }),
+    );
+  }
+  client.start();
+  awaitUp(client).then(() => {
+    sendP({ t: "task.stop", seq: 0, taskId: arg || undefined } as never);
+    console.log(`🛑 已发送停止指令 ${arg ? `(task ${arg})` : "(全部)"}`);
+    setTimeout(() => process.exit(0), 1500);
+  });
 } else if (command === "cmd" || command === "cmd-approve" || command === "tasks") {
   const s = load();
   const outbox = new Outbox<Payload>(s.sentSeq ?? 0);

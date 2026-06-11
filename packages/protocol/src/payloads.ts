@@ -67,6 +67,13 @@ export const TaskListReq = z.object({
   seq: z.number().int(),
 });
 
+/** Phone → daemon: stop a running/queued task. Omit taskId to stop everything. */
+export const TaskStop = z.object({
+  t: z.literal("task.stop"),
+  seq: z.number().int(),
+  taskId: z.string().optional(),
+});
+
 export const TaskSummary = z.object({
   taskId: z.string(),
   status: z.enum(["running", "waiting_approval", "paused", "done", "error"]),
@@ -159,6 +166,7 @@ export const Payload = z.discriminatedUnion("t", [
   PermRequest,
   PermResponse,
   TaskListReq,
+  TaskStop,
   TaskState,
   Ack,
   PairAccept,
@@ -191,6 +199,7 @@ export type TaskSummary = z.infer<typeof TaskSummary>;
 export type PairRequest = z.infer<typeof PairRequest>;
 export type PairAccept = z.infer<typeof PairAccept>;
 export type HelloPayload = z.infer<typeof HelloPayload>;
+export type TaskStop = z.infer<typeof TaskStop>;
 export type VoiceStart = z.infer<typeof VoiceStart>;
 export type VoiceChunk = z.infer<typeof VoiceChunk>;
 export type VoiceEnd = z.infer<typeof VoiceEnd>;

@@ -59,6 +59,9 @@ export function runClaudeCode(opts: RunOpts): RunningTask {
     cwd: opts.workdir,
     env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "jarvis-daemon" },
     stdio: ["ignore", "pipe", "pipe"],
+    // own process group so we can kill the whole tree (claude + its Bash/tool
+    // children); killing just the leader leaves shell subprocesses orphaned.
+    detached: true,
   });
 
   let buffer = "";
@@ -129,5 +132,26 @@ export function runClaudeCode(opts: RunOpts): RunningTask {
     });
   });
 
-  return { kill: () => child.kill("SIGTERM"), done };
+  const kill = () => {
+    if (child.pid == null) return;
+    try {
+      // negative pid = signal the whole process group (detached above)
+      process.kill(-child.pid, "SIGTERM");
+      // escalate if it doesn't exit promptly
+      setTimeout(() => {
+        try {
+          if (child.pid != null) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      }, 3000).unref();
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+  };
+  return { kill, done };
 }
