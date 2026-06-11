@@ -7,3 +7,7 @@ dist/
 *.sqlite
 *.sqlite-*
 deploy/secrets/
+.gradle-home/
+packages/app/android/
+packages/app/ios/
+packages/app/.expo/

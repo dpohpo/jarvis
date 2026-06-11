@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Jarvis daemon LaunchAgent: starts at login, restarts on crash.
+  Install:
+    cp deploy/com.poincare.jarvis.daemon.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.poincare.jarvis.daemon.plist
+  Adjust JARVIS_RELAY_URL after VPS deployment (Phase C).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.poincare.jarvis.daemon</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/node</string>
+    <string>/Volumes/金阳/jarvis/packages/daemon/dist/index.js</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JARVIS_RELAY_URL</key>
+    <string>ws://127.0.0.1:8787</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/jarvis-daemon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/jarvis-daemon.err</string>
+</dict>
+</plist>

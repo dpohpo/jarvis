@@ -1,0 +1,37 @@
+# VPS deployment: relay + ntfy push fallback behind caddy (auto-TLS on 443).
+# Usage: set DOMAIN in .env, then `docker compose up -d`.
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: packages/relay/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - relay-data:/data
+    environment:
+      - QUEUE_TTL_HOURS=72
+      - ROOM_QUEUE_CAP_MB=5
+
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    restart: unless-stopped
+    command: serve --cache-file /var/cache/ntfy/cache.db
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    environment:
+      - DOMAIN=${DOMAIN}
+
+volumes:
+  relay-data:
+  ntfy-cache:
+  caddy-data:

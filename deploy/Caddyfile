@@ -1,0 +1,8 @@
+# wss://relay.{$DOMAIN} → relay, https://ntfy.{$DOMAIN} → ntfy
+relay.{$DOMAIN} {
+	reverse_proxy relay:8787
+}
+
+ntfy.{$DOMAIN} {
+	reverse_proxy ntfy:80
+}

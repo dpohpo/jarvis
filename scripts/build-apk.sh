@@ -6,6 +6,10 @@ set -euo pipefail
 export JAVA_HOME="${JAVA_HOME_OVERRIDE:-/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home}"
 export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
 export PATH="$ANDROID_HOME/platform-tools:$JAVA_HOME/bin:$PATH"
+# ~/.gradle is a dangling symlink to an unmounted migration volume, and the
+# project volume is exFAT (no POSIX perms — gradle caches break there), so the
+# cache lives on the internal APFS disk under its own name.
+export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle-jarvis}"
 
 cd "$(dirname "$0")/../packages/app"
 

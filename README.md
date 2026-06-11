@@ -20,7 +20,10 @@ jarvis-app (Android) ◄─WSS(E2E加密blob)─► jarvis-relay (VPS,零知识)
 | `packages/protocol` | 三端共享：zod schema、信封编解码、libsodium 封装、Outbox/Inbox 续传 |
 | `packages/relay` | 零知识转发器（~250 行）：challenge-sign 鉴权、room 路由、SQLite 离线队列 |
 | `packages/daemon` | Mac 守护进程：配对、加密通道、Claude Code headless 执行器、任务库、审批门 |
-| `packages/phone-sim` | 手机模拟器（协议层与未来 APK 完全一致），用于测试 |
+| `packages/phone-sim` | 手机模拟器（协议层与 APK 完全一致），用于测试 |
+| `packages/app` | Android APK：Expo SDK 56 + react-native-libsodium，扫码配对/指令/审批弹窗 |
+
+APK 构建（本地，无需 Expo 账号）: `scripts/build-apk.sh`，VPS 部署见 `deploy/README.md`。
 
 ## 快速开始（本机全链路）
 

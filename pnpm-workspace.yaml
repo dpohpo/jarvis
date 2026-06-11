@@ -3,3 +3,16 @@ packages:
 allowBuilds:
   better-sqlite3: true
   esbuild: true
+  react-native-libsodium: true
+minimumReleaseAgeExclude:
+  - '@expo/cli@56.1.15'
+  - '@expo/log-box@56.0.13'
+  - '@expo/metro-config@56.0.14'
+  - babel-preset-expo@56.0.15
+  - expo-asset@56.0.17
+  - expo-constants@56.0.18
+  - expo-file-system@56.0.8
+  - expo-font@56.0.6
+  - expo-modules-core@56.0.16
+  - expo-modules-jsi@56.0.9
+  - expo@56.0.11
