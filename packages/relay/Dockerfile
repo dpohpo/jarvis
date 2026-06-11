@@ -5,7 +5,10 @@ RUN corepack enable && corepack prepare pnpm@11.5.3 --activate
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY packages/protocol ./packages/protocol
 COPY packages/relay ./packages/relay
-RUN pnpm install --filter @jarvis/protocol --filter @jarvis/relay --frozen-lockfile \
+# strip any *.tsbuildinfo synced from a dev machine: composite tsc would see
+# stale incremental state and emit nothing, leaving dist/ empty.
+RUN find . -name "*.tsbuildinfo" -delete \
+  && pnpm install --filter @jarvis/protocol --filter @jarvis/relay --frozen-lockfile \
   && pnpm --filter @jarvis/protocol build \
   && pnpm --filter @jarvis/relay build
 

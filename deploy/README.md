@@ -2,7 +2,9 @@
 
 ## Phase C: VPS（relay + ntfy + 自动 TLS）
 
-前置：一台 VPS（建议境内，WSS 443 体验最好）+ 一个域名，`relay.<域名>` 和 `ntfy.<域名>` 两条 A 记录指向 VPS。
+前置：一台 VPS（境外免备案；境内延迟更低但 443 需备案域名）+ 一个域名，`relay.<域名>` 和 `ntfy.<域名>` 两条 A 记录指向 VPS。
+
+> ⚠️ 若用 Cloudflare 管理 DNS，这两条记录必须设为 **DNS only（灰色云）**，不能 Proxied（橙云）。橙云会拦截 Let's Encrypt 的 ACME 验证流量导致 Caddy 签不到证书（日志报 NXDOMAIN/HTTP 400），且 WebSocket 长连接会多绕一跳、暴露连接元数据。
 
 ```bash
 # VPS 上
