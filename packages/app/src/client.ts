@@ -38,7 +38,12 @@ export interface JarvisCallbacks {
   /** What the daemon heard us say (final transcription). */
   onAsrFinal?: (text: string) => void;
   /** Complete TTS reply assembled — base64 chunks of one audio file. */
-  onTtsReady?: (chunksB64: string[], mime: string) => void;
+  onTtsReady?: (
+    chunksB64: string[],
+    mime: string,
+    durationMs: number,
+    expectReply: boolean,
+  ) => void;
 }
 
 /** Scan result → paired PhoneState. Resolves once the daemon accepts. */
@@ -110,6 +115,8 @@ export class JarvisClient {
   private voiceSeq = 0;
   private ttsChunks: string[] = [];
   private ttsMime = "audio/wav";
+  private ttsDurationMs = 0;
+  private ttsExpectReply = false;
 
   constructor(
     private state: PhoneState,
@@ -222,13 +229,20 @@ export class JarvisClient {
       case "tts.start":
         this.ttsChunks = [];
         this.ttsMime = payload.mime;
+        this.ttsDurationMs = payload.durationMs ?? 0;
+        this.ttsExpectReply = payload.expectReply ?? false;
         return;
       case "tts.chunk":
         this.ttsChunks.push(payload.data);
         return;
       case "tts.end":
         if (this.ttsChunks.length) {
-          this.cb.onTtsReady?.(this.ttsChunks, this.ttsMime);
+          this.cb.onTtsReady?.(
+            this.ttsChunks,
+            this.ttsMime,
+            this.ttsDurationMs,
+            this.ttsExpectReply,
+          );
           this.ttsChunks = [];
         }
         return;

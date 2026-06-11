@@ -47,6 +47,7 @@ import { runClaudeCode } from "./executors/claude-code.js";
 import { ApprovalBroker, classifyCommand } from "./approval.js";
 import { pcm16ToWav } from "./voice/wav.js";
 import { ensureAsrSidecar, synthesizeAny, transcribeAny } from "./voice/local.js";
+import { route, type Turn } from "./brain/router.js";
 
 // load ~/.jarvis/env (KEY=value lines) before reading any config
 try {
@@ -141,12 +142,38 @@ function sendVoiceTo(deviceId: string, payload: Payload): void {
 // ---- voice sessions ---------------------------------------------------------
 
 const voiceBuffers = new Map<string, Uint8Array[]>();
+/** Rolling conversation history per device (for the brain router). */
+const chatHistory = new Map<string, Turn[]>();
 
-async function speakTo(deviceId: string, text: string): Promise<void> {
+function remember(deviceId: string, role: Turn["role"], content: string): void {
+  const h = chatHistory.get(deviceId) ?? [];
+  h.push({ role, content });
+  chatHistory.set(deviceId, h.slice(-20));
+}
+
+/** 16kHz/22kHz mono PCM16 WAV → playback ms, straight from the header. */
+function wavDurationMs(wav: Uint8Array): number {
+  if (wav.length < 44) return 0;
+  const v = new DataView(wav.buffer, wav.byteOffset);
+  const byteRate = v.getUint32(28, true);
+  return byteRate > 0 ? Math.round(((wav.length - 44) / byteRate) * 1000) : 0;
+}
+
+async function speakTo(
+  deviceId: string,
+  text: string,
+  opts?: { expectReply?: boolean },
+): Promise<void> {
   try {
     const wav = await synthesizeAny(text);
     if (!wav) return;
-    sendVoiceTo(deviceId, { t: "tts.start", seq: 0, mime: "audio/wav" });
+    sendVoiceTo(deviceId, {
+      t: "tts.start",
+      seq: 0,
+      mime: "audio/wav",
+      durationMs: wavDurationMs(wav),
+      expectReply: opts?.expectReply ?? false,
+    });
     const CHUNK = 48 * 1024;
     let seq = 0;
     for (let off = 0; off < wav.length; off += CHUNK) {
@@ -183,11 +210,39 @@ async function handleVoiceEnd(from: string): Promise<void> {
     const text = await transcribeAny(pcm16ToWav(pcm));
     if (!text) {
       sendTo(from, { t: "asr.final", seq: 0, text: "" });
-      void speakTo(from, "抱歉，我没有听清。");
+      void speakTo(from, "抱歉，我没有听清。", { expectReply: true });
       return;
     }
     sendTo(from, { t: "asr.final", seq: 0, text });
-    await handleCmd(from, randomId(), text, undefined, { voiceReply: true });
+    remember(from, "user", text);
+
+    // brain: clean + decide in one call (graceful: falls back to direct task)
+    const decision = await route(text, chatHistory.get(from) ?? []);
+    log(`brain: ${decision.action}${decision.task ? ` task='${decision.task.slice(0, 60)}'` : ""}`);
+
+    if (decision.action === "answer" || decision.action === "clarify") {
+      remember(from, "assistant", decision.reply);
+      // show the reply as a chat line in the console too
+      sendTo(from, {
+        t: "task.event",
+        seq: 0,
+        taskId: `chat-${randomId().slice(0, 8)}`,
+        ev: "done",
+        data: decision.reply,
+        ts: Date.now(),
+      });
+      await speakTo(from, decision.reply, {
+        expectReply: decision.action === "clarify",
+      });
+      return;
+    }
+
+    // task: short spoken ack first, then execute with spoken result
+    remember(from, "assistant", decision.reply || "好的。");
+    void speakTo(from, decision.reply || "好的，这就去办。");
+    await handleCmd(from, randomId(), decision.task || text, undefined, {
+      voiceReply: true,
+    });
   } catch (e) {
     log(`asr failed: ${String(e)}`);
     void speakTo(from, "语音识别出错了。");
@@ -264,7 +319,9 @@ async function handleCmd(
   running.delete(taskId);
   store.setStatus(taskId, ok ? "done" : "error");
   if (opts?.voiceReply) {
-    void speakTo(from, ok ? result || "完成了。" : `出错了：${result.slice(0, 200)}`);
+    const spoken = ok ? result || "完成了。" : `出错了：${result.slice(0, 200)}`;
+    remember(from, "assistant", `[任务结果] ${spoken.slice(0, 300)}`);
+    void speakTo(from, spoken, { expectReply: true });
   }
 }
 

@@ -56,11 +56,15 @@ function Main() {
   const [lines, setLines] = useState<LogLine[]>([]);
   const [perm, setPerm] = useState<PermRequest | null>(null);
   const [recording, setRecording] = useState(false);
+  const [convMode, setConvMode] = useState(false);
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const client = useRef<JarvisClient | null>(null);
   const scanned = useRef(false);
   const pressStart = useRef(0);
-  const recMode = useRef<"hold" | "tap" | null>(null);
+  const recMode = useRef<"hold" | "tap" | "auto" | null>(null);
+  const convModeRef = useRef(false);
+  const autoListenTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  convModeRef.current = convMode;
 
   const pushLine = useCallback((kind: LogLine["kind"], text: string) => {
     setLines((prev) => [
@@ -92,8 +96,16 @@ function Main() {
       },
       onPermRequest: setPerm,
       onAsrFinal: (text) => pushLine("local", text ? `🎤 ${text}` : "🎤 (没听清)"),
-      onTtsReady: (chunks) => {
+      onTtsReady: (chunks, _mime, durationMs, expectReply) => {
         void playTtsWav(chunks).catch((e) => pushLine("error", `播放失败: ${e}`));
+        // conversation mode: when Jarvis expects an answer, start listening
+        // right after the reply finishes playing
+        if (convModeRef.current && expectReply) {
+          if (autoListenTimer.current) clearTimeout(autoListenTimer.current);
+          autoListenTimer.current = setTimeout(() => {
+            void autoListen();
+          }, Math.max(durationMs, 500) + 500);
+        }
       },
       onTaskState: (tasks) => {
         pushLine(
@@ -141,7 +153,7 @@ function Main() {
     setInput("");
   }, [input, pushLine]);
 
-  const beginRecording = useCallback(async () => {
+  const beginRecording = useCallback(async (vad: boolean) => {
     if (!client.current) return false;
     if (Platform.OS === "android") {
       const r = await PermissionsAndroid.request(
@@ -150,7 +162,16 @@ function Main() {
       if (r !== PermissionsAndroid.RESULTS.GRANTED) return false;
     }
     client.current.startVoice();
-    const ok = await startCapture((b64) => client.current?.sendVoiceChunk(b64));
+    const ok = await startCapture({
+      onChunk: (b64) => client.current?.sendVoiceChunk(b64),
+      vad,
+      onAutoEnd: () => {
+        // VAD already stopped the mic and flushed; just close the stream
+        recMode.current = null;
+        setRecording(false);
+        client.current?.endVoice();
+      },
+    });
     if (ok) setRecording(true);
     return ok;
   }, []);
@@ -162,15 +183,27 @@ function Main() {
     client.current?.endVoice();
   }, []);
 
+  const autoListen = useCallback(async () => {
+    if (recMode.current !== null) return; // already recording
+    recMode.current = "auto";
+    const ok = await beginRecording(true);
+    if (!ok) recMode.current = null;
+  }, [beginRecording]);
+
   const onMicPressIn = useCallback(async () => {
     if (recording && recMode.current === "tap") {
       // second tap ends a tap-mode recording
       await finishRecording();
       return;
     }
+    if (recording && recMode.current === "auto") {
+      // tapping during auto-listen ends it immediately
+      await finishRecording();
+      return;
+    }
     pressStart.current = Date.now();
     recMode.current = "hold";
-    await beginRecording();
+    await beginRecording(false);
   }, [recording, beginRecording, finishRecording]);
 
   const onMicPressOut = useCallback(async () => {
@@ -275,6 +308,11 @@ function Main() {
       <View style={styles.header}>
         <View style={[styles.dot, { backgroundColor: linkUp ? "#7FD1AE" : "#E0635C" }]} />
         <Text style={styles.headerText}>{state.daemonDeviceId}</Text>
+        <Pressable onPress={() => setConvMode((v) => !v)}>
+          <Text style={[styles.headerAction, convMode && { color: "#7FD1AE" }]}>
+            {convMode ? "对话中" : "对话"}
+          </Text>
+        </Pressable>
         <Pressable onPress={() => client.current?.requestTaskList()}>
           <Text style={styles.headerAction}>任务</Text>
         </Pressable>
@@ -303,7 +341,11 @@ function Main() {
         <View style={styles.recBanner}>
           <View style={styles.recDot} />
           <Text style={styles.recText}>
-            {recMode.current === "tap" ? "录音中 — 再按一下麦克风结束" : "录音中 — 松开发送"}
+            {recMode.current === "auto"
+              ? "聆听中 — 说完停顿即发送（按麦克风立即结束）"
+              : recMode.current === "tap"
+                ? "录音中 — 再按一下麦克风结束"
+                : "录音中 — 松开发送"}
           </Text>
         </View>
       )}

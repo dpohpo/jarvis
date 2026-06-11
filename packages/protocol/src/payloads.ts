@@ -120,6 +120,10 @@ export const TtsStart = z.object({
   t: z.literal("tts.start"),
   seq: z.number().int(),
   mime: z.string(), // e.g. "audio/wav"
+  /** Playback length computed from the WAV header — phones schedule auto-listen off this. */
+  durationMs: z.number().int().optional(),
+  /** True when the daemon expects a spoken follow-up (clarify / conversation). */
+  expectReply: z.boolean().optional(),
 });
 
 export const TtsChunk = z.object({
