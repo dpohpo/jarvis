@@ -38,6 +38,15 @@ export function randomBytes(n: number): Uint8Array {
   return getSodium().randombytes_buf(n);
 }
 
+/**
+ * 128-bit random id, hex. Sodium-backed so it works on Hermes too —
+ * ulid/uuid libraries die there with "failed to find a reliable PRNG"
+ * (no global crypto.getRandomValues).
+ */
+export function randomId(): string {
+  return getSodium().to_hex(getSodium().randombytes_buf(16));
+}
+
 export function toB64(data: Uint8Array): string {
   const sodium = getSodium();
   return sodium.to_base64(data, sodium.base64_variants.ORIGINAL);
@@ -48,12 +57,57 @@ export function fromB64(data: string): Uint8Array {
   return sodium.from_base64(data, sodium.base64_variants.ORIGINAL);
 }
 
+// UTF-8 helpers are pure JS on purpose: react-native-libsodium's native runtime
+// does NOT implement from_string (its .d.ts claims otherwise), so any sodium
+// string helper is a landmine. TextEncoder/TextDecoder exist on Node 20+ and
+// Hermes; the manual path covers anything older.
 export function utf8ToBytes(s: string): Uint8Array {
-  return getSodium().from_string(s);
+  if (typeof TextEncoder !== "undefined") return new TextEncoder().encode(s);
+  const out: number[] = [];
+  for (let i = 0; i < s.length; i++) {
+    let cp = s.codePointAt(i)!;
+    if (cp > 0xffff) i++; // surrogate pair consumed
+    if (cp < 0x80) out.push(cp);
+    else if (cp < 0x800) out.push(0xc0 | (cp >> 6), 0x80 | (cp & 0x3f));
+    else if (cp < 0x10000)
+      out.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 0x3f), 0x80 | (cp & 0x3f));
+    else
+      out.push(
+        0xf0 | (cp >> 18),
+        0x80 | ((cp >> 12) & 0x3f),
+        0x80 | ((cp >> 6) & 0x3f),
+        0x80 | (cp & 0x3f),
+      );
+  }
+  return new Uint8Array(out);
 }
 
 export function bytesToUtf8(b: Uint8Array): string {
-  return getSodium().to_string(b);
+  if (typeof TextDecoder !== "undefined") return new TextDecoder().decode(b);
+  let s = "";
+  for (let i = 0; i < b.length; ) {
+    const x = b[i]!;
+    let cp: number;
+    if (x < 0x80) {
+      cp = x;
+      i += 1;
+    } else if (x < 0xe0) {
+      cp = ((x & 0x1f) << 6) | (b[i + 1]! & 0x3f);
+      i += 2;
+    } else if (x < 0xf0) {
+      cp = ((x & 0x0f) << 12) | ((b[i + 1]! & 0x3f) << 6) | (b[i + 2]! & 0x3f);
+      i += 3;
+    } else {
+      cp =
+        ((x & 0x07) << 18) |
+        ((b[i + 1]! & 0x3f) << 12) |
+        ((b[i + 2]! & 0x3f) << 6) |
+        (b[i + 3]! & 0x3f);
+      i += 4;
+    }
+    s += String.fromCodePoint(cp);
+  }
+  return s;
 }
 
 /** Room id = first 16 bytes of BLAKE2b(roomSecret), hex. Unguessable, reveals nothing. */

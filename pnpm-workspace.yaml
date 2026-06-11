@@ -17,3 +17,4 @@ minimumReleaseAgeExclude:
   - expo-modules-jsi@56.0.9
   - expo@56.0.11
   - expo-camera@56.0.8
+  - expo-build-properties@56.0.18

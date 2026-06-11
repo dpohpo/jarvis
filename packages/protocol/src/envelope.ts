@@ -3,11 +3,11 @@
  * Routing metadata + an opaque encrypted blob. No plaintext payload ever crosses this boundary.
  */
 import { z } from "zod";
-import { ulid } from "ulid";
 import {
   boxOpen,
   boxTo,
   bytesToUtf8,
+  randomId,
   utf8ToBytes,
   type SealedMessage,
 } from "./crypto.js";
@@ -47,7 +47,7 @@ export function sealPayload(
   );
   return {
     v: 1,
-    id: ulid(),
+    id: randomId(),
     room: opts.room,
     from: opts.from,
     to: opts.to,
@@ -77,7 +77,7 @@ export function openPayload(env: Envelope, peer: PeerCrypto): Payload | null {
 export function pairEnvelope(room: string, from: string, to: string, sealedB64: string): Envelope {
   return {
     v: 1,
-    id: ulid(),
+    id: randomId(),
     room,
     from,
     to,

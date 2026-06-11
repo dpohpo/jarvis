@@ -33,6 +33,8 @@ export default function App() {
   const [booted, setBooted] = useState(false);
   const [state, setState] = useState<PhoneState | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [manualPair, setManualPair] = useState(false);
+  const [manualJson, setManualJson] = useState("");
   const [pairing, setPairing] = useState(false);
   const [linkUp, setLinkUp] = useState(false);
   const [input, setInput] = useState("");
@@ -100,7 +102,9 @@ export default function App() {
       await saveState(s);
       setState(s);
     } catch (e) {
-      Alert.alert("配对失败", String(e instanceof Error ? e.message : e));
+      const err = e instanceof Error ? e : new Error(String(e));
+      console.error("[pair] failed:", err.message, err.stack);
+      Alert.alert("配对失败", `${err.message}\n\n${(err.stack ?? "").slice(0, 600)}`);
     } finally {
       setPairing(false);
       scanned.current = false;
@@ -147,20 +151,52 @@ export default function App() {
             </Text>
             {pairing ? (
               <ActivityIndicator color="#7FD1AE" style={{ marginTop: 24 }} />
+            ) : manualPair ? (
+              <View style={{ width: "100%", marginTop: 24 }}>
+                <TextInput
+                  style={[styles.input, { minHeight: 90 }]}
+                  value={manualJson}
+                  onChangeText={setManualJson}
+                  placeholder='粘贴配对 JSON（{"relayUrl":...}）'
+                  placeholderTextColor="#5B6770"
+                  multiline
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <View style={{ flexDirection: "row", gap: 12, marginTop: 14 }}>
+                  <Pressable
+                    style={[styles.primaryBtn, { flex: 1, marginTop: 0 }]}
+                    onPress={() => setManualPair(false)}
+                  >
+                    <Text style={styles.btnText}>返回</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.primaryBtn, { flex: 1, marginTop: 0 }]}
+                    onPress={() => void onScan(manualJson.trim())}
+                  >
+                    <Text style={styles.btnText}>配对</Text>
+                  </Pressable>
+                </View>
+              </View>
             ) : (
-              <Pressable
-                style={styles.primaryBtn}
-                onPress={async () => {
-                  if (!camPerm?.granted) {
-                    const r = await requestCamPerm();
-                    if (!r.granted) return;
-                  }
-                  scanned.current = false;
-                  setScanning(true);
-                }}
-              >
-                <Text style={styles.btnText}>扫码配对</Text>
-              </Pressable>
+              <>
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={async () => {
+                    if (!camPerm?.granted) {
+                      const r = await requestCamPerm();
+                      if (!r.granted) return;
+                    }
+                    scanned.current = false;
+                    setScanning(true);
+                  }}
+                >
+                  <Text style={styles.btnText}>扫码配对</Text>
+                </Pressable>
+                <Pressable onPress={() => setManualPair(true)}>
+                  <Text style={[styles.subtitle, { marginTop: 18 }]}>手动输入配对信息</Text>
+                </Pressable>
+              </>
             )}
           </>
         )}

@@ -2,7 +2,6 @@
  * JarvisClient — the phone side of the encrypted channel.
  * Same protocol path as packages/phone-sim, wrapped for React state consumption.
  */
-import { ulid } from "ulid";
 import {
   Inbox,
   Outbox,
@@ -15,6 +14,7 @@ import {
   generateIdentity,
   openPayload,
   pairEnvelope,
+  randomId,
   seal,
   sealPayload,
   toB64,
@@ -41,7 +41,7 @@ export interface JarvisCallbacks {
 export function pairWithDaemon(info: PairInfo, deviceName: string): Promise<PhoneState> {
   const id = generateIdentity();
   const state: PhoneState = {
-    deviceId: `phone-${ulid().slice(-8).toLowerCase()}`,
+    deviceId: `phone-${randomId().slice(0, 8)}`,
     boxPub: toB64(id.box.publicKey),
     boxPriv: toB64(id.box.privateKey),
     signPub: toB64(id.sign.publicKey),
@@ -141,7 +141,7 @@ export class JarvisClient {
   }
 
   submitCommand(text: string): string {
-    const cmdId = ulid();
+    const cmdId = randomId();
     this.send({ t: "cmd.submit", seq: 0, cmdId, text } as never);
     return cmdId;
   }
