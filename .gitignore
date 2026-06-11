@@ -11,3 +11,6 @@ deploy/secrets/
 packages/app/android/
 packages/app/ios/
 packages/app/.expo/
+dist-apk/
+._*
+.claude/*.lock
