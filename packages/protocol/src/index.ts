@@ -1,3 +1,4 @@
+export * from "./sodium-provider.js";
 export * from "./crypto.js";
 export * from "./payloads.js";
 export * from "./envelope.js";

@@ -1,20 +1,13 @@
 /**
- * Crypto layer for Jarvis, backed by libsodium.
+ * Crypto layer for Jarvis, backed by libsodium (implementation injected — see
+ * sodium-provider.ts; Node auto-loads via "@jarvis/protocol/node", React Native
+ * injects react-native-libsodium).
  *
  * - Long-term identity per device: X25519 box keypair (encryption) + Ed25519 sign keypair (relay auth).
  * - Peer messages: crypto_box_easy (X25519 + XSalsa20-Poly1305), random 24-byte nonce per message.
- * - Pairing bootstrap: sealed box to the daemon's public key (sender anonymous until inner payload is read).
- *
- * The same `libsodium-wrappers` API surface is implemented by `react-native-libsodium`,
- * so this module is shared verbatim by the phone app.
+ * - Pairing bootstrap: sealed box to the daemon's public key.
  */
-// libsodium-wrappers' ESM dist is broken (its .mjs imports ./libsodium.mjs, which
-// lives in the sibling `libsodium` package) — load the CJS build, which resolves
-// correctly. The React Native app swaps this module for react-native-libsodium.
-import { createRequire } from "node:module";
-const _sodium = createRequire(import.meta.url)(
-  "libsodium-wrappers",
-) as typeof import("libsodium-wrappers");
+import { getSodium } from "./sodium-provider.js";
 
 export interface BoxKeyPair {
   publicKey: Uint8Array;
@@ -31,15 +24,8 @@ export interface DeviceIdentity {
   sign: SignKeyPair;
 }
 
-let sodium: typeof _sodium;
-
-/** Must be awaited once before any other function in this module. */
-export async function cryptoReady(): Promise<void> {
-  await _sodium.ready;
-  sodium = _sodium;
-}
-
 export function generateIdentity(): DeviceIdentity {
+  const sodium = getSodium();
   const box = sodium.crypto_box_keypair();
   const sign = sodium.crypto_sign_keypair();
   return {
@@ -49,27 +35,30 @@ export function generateIdentity(): DeviceIdentity {
 }
 
 export function randomBytes(n: number): Uint8Array {
-  return sodium.randombytes_buf(n);
+  return getSodium().randombytes_buf(n);
 }
 
 export function toB64(data: Uint8Array): string {
+  const sodium = getSodium();
   return sodium.to_base64(data, sodium.base64_variants.ORIGINAL);
 }
 
 export function fromB64(data: string): Uint8Array {
+  const sodium = getSodium();
   return sodium.from_base64(data, sodium.base64_variants.ORIGINAL);
 }
 
 export function utf8ToBytes(s: string): Uint8Array {
-  return sodium.from_string(s);
+  return getSodium().from_string(s);
 }
 
 export function bytesToUtf8(b: Uint8Array): string {
-  return sodium.to_string(b);
+  return getSodium().to_string(b);
 }
 
 /** Room id = first 16 bytes of BLAKE2b(roomSecret), hex. Unguessable, reveals nothing. */
 export function deriveRoomId(roomSecret: Uint8Array): string {
+  const sodium = getSodium();
   const h = sodium.crypto_generichash(32, roomSecret);
   return sodium.to_hex(h.subarray(0, 16));
 }
@@ -85,6 +74,7 @@ export function boxTo(
   theirBoxPublic: Uint8Array,
   myBoxPrivate: Uint8Array,
 ): SealedMessage {
+  const sodium = getSodium();
   const nonce = sodium.randombytes_buf(sodium.crypto_box_NONCEBYTES);
   const box = sodium.crypto_box_easy(plaintext, nonce, theirBoxPublic, myBoxPrivate);
   return { nonce: toB64(nonce), box: toB64(box) };
@@ -97,7 +87,7 @@ export function boxOpen(
   myBoxPrivate: Uint8Array,
 ): Uint8Array | null {
   try {
-    return sodium.crypto_box_open_easy(
+    return getSodium().crypto_box_open_easy(
       fromB64(msg.box),
       fromB64(msg.nonce),
       theirBoxPublic,
@@ -110,7 +100,7 @@ export function boxOpen(
 
 /** Anonymous sealed box — used once during pairing, phone → daemon. */
 export function seal(plaintext: Uint8Array, theirBoxPublic: Uint8Array): string {
-  return toB64(sodium.crypto_box_seal(plaintext, theirBoxPublic));
+  return toB64(getSodium().crypto_box_seal(plaintext, theirBoxPublic));
 }
 
 export function sealOpen(
@@ -119,7 +109,7 @@ export function sealOpen(
   myBoxPrivate: Uint8Array,
 ): Uint8Array | null {
   try {
-    return sodium.crypto_box_seal_open(fromB64(sealedB64), myBoxPublic, myBoxPrivate);
+    return getSodium().crypto_box_seal_open(fromB64(sealedB64), myBoxPublic, myBoxPrivate);
   } catch {
     return null;
   }
@@ -127,7 +117,7 @@ export function sealOpen(
 
 /** Relay auth: sign the relay's challenge to bind deviceId ↔ sign pubkey. */
 export function signDetached(message: Uint8Array, signPrivate: Uint8Array): string {
-  return toB64(sodium.crypto_sign_detached(message, signPrivate));
+  return toB64(getSodium().crypto_sign_detached(message, signPrivate));
 }
 
 export function verifyDetached(
@@ -136,7 +126,7 @@ export function verifyDetached(
   signPublic: Uint8Array,
 ): boolean {
   try {
-    return sodium.crypto_sign_verify_detached(fromB64(sigB64), message, signPublic);
+    return getSodium().crypto_sign_verify_detached(fromB64(sigB64), message, signPublic);
   } catch {
     return false;
   }

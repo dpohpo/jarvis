@@ -1,0 +1,30 @@
+{
+  "name": "@jarvis/app",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "dependencies": {
+    "@jarvis/protocol": "workspace:*",
+    "expo": "~56.0.11",
+    "expo-camera": "~17.0.10",
+    "expo-secure-store": "~15.0.8",
+    "expo-status-bar": "~56.0.4",
+    "react": "19.2.3",
+    "react-native": "0.85.3",
+    "react-native-libsodium": "^1.7.0",
+    "ulid": "^3.0.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "typescript": "~6.0.3"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android",
+    "build": "echo 'use: pnpm apk'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'manual: on-device'",
+    "apk": "expo prebuild --platform android --no-install && cd android && ./gradlew assembleRelease"
+  },
+  "private": true
+}

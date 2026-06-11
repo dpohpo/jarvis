@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Jarvis",
+    "slug": "jarvis",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.poincare.jarvis"
+    },
+    "android": {
+      "package": "com.poincare.jarvis",
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0F14",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "permissions": ["android.permission.CAMERA", "android.permission.INTERNET"],
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        { "cameraPermission": "扫描 Mac 上的配对二维码需要相机权限" }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

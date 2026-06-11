@@ -29,7 +29,7 @@ import {
   sealPayload,
   toB64,
   utf8ToBytes,
-} from "@jarvis/protocol";
+} from "@jarvis/protocol/node";
 
 interface SimState {
   deviceId: string;

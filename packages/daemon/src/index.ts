@@ -31,7 +31,7 @@ import {
   toB64,
   utf8ToBytes,
   boxTo,
-} from "@jarvis/protocol";
+} from "@jarvis/protocol/node";
 import {
   addDevice,
   consumePairToken,

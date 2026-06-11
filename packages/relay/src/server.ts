@@ -24,7 +24,7 @@ import {
   randomBytes,
   toB64,
   verifyDetached,
-} from "@jarvis/protocol";
+} from "@jarvis/protocol/node";
 
 const PORT = Number(process.env.PORT ?? 8787);
 const DB_PATH = process.env.DB_PATH ?? "relay.sqlite";
