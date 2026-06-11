@@ -9,7 +9,7 @@
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import WebSocket from "ws";
 import { ulid } from "ulid";
 import {
@@ -47,6 +47,17 @@ import { runClaudeCode } from "./executors/claude-code.js";
 import { ApprovalBroker, classifyCommand } from "./approval.js";
 import { pcm16ToWav } from "./voice/wav.js";
 import { ensureAsrSidecar, synthesizeAny, transcribeAny } from "./voice/local.js";
+
+// load ~/.jarvis/env (KEY=value lines) before reading any config
+try {
+  const envFile = join(homedir(), ".jarvis", "env");
+  for (const line of readFileSync(envFile, "utf8").split("\n")) {
+    const m = line.match(/^([A-Z_]+)=(.*)$/);
+    if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!;
+  }
+} catch {
+  // no env file — fine
+}
 
 const RELAY_URL = process.env.JARVIS_RELAY_URL ?? "ws://127.0.0.1:8787";
 const ADMIN_PORT = Number(process.env.JARVIS_ADMIN_PORT ?? 8788);

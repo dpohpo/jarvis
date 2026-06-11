@@ -7,9 +7,14 @@
  */
 import { readFileSync, existsSync } from "node:fs";
 
-const ASR_URL = "https://open.bigmodel.cn/api/paas/v4/audio/transcriptions";
+// Coding-plan subscribers must use the coding base, NOT the standard paas base
+// (the standard base bills the pay-as-you-go account → 1113 欠费 even when the
+// coding plan has quota). Override with JARVIS_ZHIPU_BASE if needed.
+const BASE =
+  process.env.JARVIS_ZHIPU_BASE ?? "https://open.bigmodel.cn/api/coding/paas/v4";
+const ASR_URL = `${BASE}/audio/transcriptions`;
 const ASR_MODEL = "glm-asr-2512";
-const TTS_URL = "https://open.bigmodel.cn/api/paas/v4/audio/speech";
+const TTS_URL = `${BASE}/audio/speech`;
 const TTS_MODEL = "glm-tts";
 const TTS_VOICE = "tongtong";
 const TTS_MAX_CHARS = 1024;

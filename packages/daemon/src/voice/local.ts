@@ -88,7 +88,8 @@ async function sayTts(text: string): Promise<Uint8Array> {
       execFile(cmd, args, (err) => (err ? reject(err) : resolve()));
     });
   try {
-    await run("say", ["-o", aiff, text.slice(0, 1000)]);
+    // Tingting = zh_CN voice; the default voice mangles Chinese into noise
+    await run("say", ["-v", "Tingting", "-o", aiff, text.slice(0, 1000)]);
     await run("afconvert", ["-f", "WAVE", "-d", "LEI16@22050", "-c", "1", aiff, wav]);
     return new Uint8Array(readFileSync(wav));
   } finally {
