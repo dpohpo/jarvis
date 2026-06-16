@@ -132,6 +132,39 @@ const httpServer = createServer((req, res) => {
     res.end("ok");
     return;
   }
+  // ---- Multi-tenant onboarding ------------------------------------------
+  // GET /register?name=macbook-air
+  //   Returns: { room, relayUrl, registeredAt }
+  //
+  // Each new device pair (one Mac + one or more phones) gets a fresh random
+  // 128-bit room id. The relay is zero-knowledge — it never sees the room
+  // secret, just the (public) room id used for routing. Encryption is
+  // end-to-end between daemon and phone via sealed envelope boxes, so even
+  // the relay operator cannot read user traffic.
+  //
+  // Why random rooms instead of user accounts: keeps the relay stateless
+  // and zero-Pii. There's no /login, no password reset, no email collection.
+  // A user who loses both their Mac and their phone loses access — by design,
+  // there's no recovery path. (Premium tier could add an optional backup.)
+  if (req.url?.startsWith("/register")) {
+    const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
+    const name = (url.searchParams.get("name") ?? "device").slice(0, 32);
+    // 16 random bytes → 32 hex chars. Plenty of collision resistance for
+    // the global namespace (birthday bound ~2^64 before a 50% collision).
+    const roomBytes = randomBytes(16);
+    const room = Buffer.from(roomBytes).toString("hex");
+    const relayUrl = `ws://${req.headers.host ?? `localhost:${PORT}`}`;
+    const payload = JSON.stringify({
+      room,
+      relayUrl,
+      name,
+      registeredAt: Date.now(),
+    });
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(payload);
+    console.log(`[relay] registered room ${room.slice(0, 8)}… for "${name}"`);
+    return;
+  }
   res.writeHead(404);
   res.end();
 });
