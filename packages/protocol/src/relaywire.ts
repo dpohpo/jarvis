@@ -36,6 +36,17 @@ export const WireSend = z.object({
   env: Envelope,
 });
 
+/** Client → server. Application-level keepalive ping.
+ *  Purpose: detect half-open TCP connections caused by NAT/firewall idle
+ *  timeouts. Without this, a device can sit in `up=true` forever while the
+ *  relay has long since dropped the session; onclose never fires because no
+ *  FIN crosses the silent link. The relay must echo `pong` within the
+ *  client's PONG_TIMEOUT_MS or the client force-closes the socket and
+ *  reconnects. */
+export const WirePing = z.object({
+  t: z.literal("ping"),
+});
+
 export const WireRecv = z.object({
   t: z.literal("recv"),
   env: Envelope,
@@ -51,7 +62,12 @@ export const WireError = z.object({
   reason: z.string(),
 });
 
-export const ClientFrame = z.discriminatedUnion("t", [WireAuth, WireSend]);
+/** Server → client. Echoed in response to a `ping` frame. */
+export const WirePong = z.object({
+  t: z.literal("pong"),
+});
+
+export const ClientFrame = z.discriminatedUnion("t", [WireAuth, WireSend, WirePing]);
 export const ServerFrame = z.discriminatedUnion("t", [
   WireChallenge,
   WireAuthOk,
@@ -59,6 +75,7 @@ export const ServerFrame = z.discriminatedUnion("t", [
   WireRecv,
   WirePresence,
   WireError,
+  WirePong,
 ]);
 
 export type ClientFrame = z.infer<typeof ClientFrame>;

@@ -194,6 +194,16 @@ wss.on("connection", (ws) => {
         return;
       }
       deliverOrQueue(env);
+      return;
+    }
+
+    if (frame.t === "ping") {
+      // Heartbeat echo. Allows clients to detect half-open TCP links
+      // (NAT/firewall idle timeouts) and force a reconnect instead of
+      // sitting in `up=true` forever while the relay has dropped them.
+      // Auth not required — the challenge handshake has already proven
+      // possession of the key, and a ping carries no state.
+      send(ws, { t: "pong" });
     }
   });
 
