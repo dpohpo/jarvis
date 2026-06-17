@@ -1,95 +1,102 @@
 /**
- * Wake-word detection ("Jarvis") via Picovoice Porcupine.
+ * Wake-word detection ("Jarvis") via the locally-written SherpaWakeModule
+ * (Expo Module wrapping sherpa-onnx KeywordSpotter).
  *
- * Porcupine uses the BuiltInKeyword.JARVIS model (verified present in the
- * package enum — no training, no .ppn file needed). It needs a free AccessKey
- * from console.picovoice.ai, which the daemon pushes down (config payload) so
- * the secret stays on the Mac.
+ * Why sherpa-onnx instead of Picovoice Porcupine:
+ *  - Picovoice requires an AccessKey from console.picovoice.ai; registration
+ *    never delivered the activation email after multiple attempts.
+ *  - sherpa-onnx is Apache-2.0, account-free, runs fully offline, and the
+ *    zipformer-gigaspeech 3.3M model can spell JARVIS from BPE tokens
+ *    (J=299, A=25, R=24, V=97, I=36, S=3 — all present in tokens.txt).
  *
- * IMPORTANT mic coordination: Porcupine and our push-to-talk capture
- * (voice.ts) both drive the SAME react-native-voice-processor singleton, so
- * only one may hold the mic at a time. On wake we stop Porcupine (releases the
- * mic), let the caller run a normal recording, then resume listening.
+ * The model + keywords.txt are bundled under
+ *   android/app/src/main/assets/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/
+ *
+ * Mic coordination: SherpaWake owns its own AudioRecord (16kHz mono PCM16).
+ * voice.ts drives @picovoice/react-native-voice-processor. Android allows
+ * concurrent AudioRecords, but to be safe the caller should toggle:
+ * start recording → stop wake → ... → stop recording → start wake.
  */
-import {
-  PorcupineManager,
-  BuiltInKeyword,
-} from "@picovoice/porcupine-react-native";
+import SherpaWake from "sherpa-wake";
 
-let manager: PorcupineManager | null = null;
-let listening = false;
+let wakeListener: { remove: () => void } | null = null;
 let onWakeCb: (() => void) | null = null;
+let ready = false;
+let listening = false;
 
-/** True once a manager exists (i.e. an AccessKey was provided and init succeeded). */
+/** True once the model has been successfully loaded. */
 export function isWakeReady(): boolean {
-  return manager !== null;
+  return ready;
 }
 
 export function isListening(): boolean {
   return listening;
 }
 
-/**
- * Build the Porcupine manager for the "Jarvis" keyword. Idempotent-ish:
- * tears down any previous instance first. Returns false on bad/empty key.
- */
-export async function initWake(accessKey: string, onWake: () => void): Promise<boolean> {
-  if (!accessKey) return false;
-  await destroyWake();
-  onWakeCb = onWake;
-  try {
-    manager = await PorcupineManager.fromBuiltInKeywords(
-      accessKey,
-      [BuiltInKeyword.JARVIS],
-      (_keywordIndex: number) => {
-        // mic is about to be needed by the recorder — release it first
-        void pauseListening().then(() => onWakeCb?.());
-      },
-      (err: unknown) => {
-        console.error("[wake] porcupine error:", String(err));
-      },
-    );
+/** Load the KWS model from Android assets and register the wake listener.
+ *  Idempotent: safe to call multiple times. Returns false on failure. */
+export async function initWake(onWake: () => void): Promise<boolean> {
+  if (ready) {
+    onWakeCb = onWake;
     return true;
+  }
+  onWakeCb = onWake;
+  // Subscribe before init so we never miss the first hit.
+  if (!wakeListener) {
+    wakeListener = SherpaWake.addListener("wake", () => {
+      onWakeCb?.();
+    });
+  }
+  try {
+    ready = await SherpaWake.init();
+    if (!ready) {
+      console.error("[wake] SherpaWake.init() returned false");
+    }
+    return ready;
   } catch (e) {
     console.error("[wake] init failed:", String(e));
-    manager = null;
+    ready = false;
     return false;
   }
 }
 
-/** Start listening for "Jarvis". No-op if not initialised. */
+/** Start background AudioRecord + KWS loop. No-op if already running. */
 export async function startListening(): Promise<boolean> {
-  if (!manager || listening) return listening;
+  if (!ready || listening) return listening;
   try {
-    await manager.start();
-    listening = true;
-    return true;
+    const ok = await SherpaWake.start();
+    listening = ok;
+    return ok;
   } catch (e) {
     console.error("[wake] start failed:", String(e));
     return false;
   }
 }
 
-/** Stop listening but keep the manager (so we can resume after a recording). */
+/** Stop the KWS loop and release the AudioRecord. Keeps the model loaded
+ *  so subsequent startListening() is fast. */
 export async function pauseListening(): Promise<void> {
-  if (!manager || !listening) return;
+  if (!listening) return;
   try {
-    await manager.stop();
+    await SherpaWake.stop();
   } catch (e) {
     console.error("[wake] stop failed:", String(e));
   }
   listening = false;
 }
 
-/** Fully release Porcupine (and its mic). Call when turning the feature off. */
+/** Fully release the model + audio resources. Call when the feature is
+ *  turned off for good (e.g. user toggled the switch to off). */
 export async function destroyWake(): Promise<void> {
-  if (!manager) return;
   try {
-    if (listening) await manager.stop();
-    await manager.delete();
+    if (listening) await SherpaWake.stop();
+    await SherpaWake.destroy();
   } catch (e) {
     console.error("[wake] destroy failed:", String(e));
   }
-  manager = null;
+  wakeListener?.remove();
+  wakeListener = null;
+  onWakeCb = null;
+  ready = false;
   listening = false;
 }

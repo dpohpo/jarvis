@@ -1,0 +1,14 @@
+{
+  "name": "sherpa-wake",
+  "version": "0.1.0",
+  "description": "Offline Jarvis wake-word detection via sherpa-onnx KeywordSpotter",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  },
+  "sideEffects": false
+}

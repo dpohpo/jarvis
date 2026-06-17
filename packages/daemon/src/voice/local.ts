@@ -54,6 +54,11 @@ async function localAsr(wav: Uint8Array): Promise<string> {
 }
 
 export async function transcribeAny(wav: Uint8Array): Promise<string> {
+  // Re-spawn sidecar if it has died since daemon start. Without this, any
+  // transient sidecar crash (e.g. 8898 still held by an orphan from a
+  // previous daemon instance) permanently disables local ASR until daemon
+  // restart, which forces every voice turn to fall through to GLM cloud.
+  ensureAsrSidecar();
   try {
     const text = await localAsr(wav);
     log(`asr(local): '${text}'`);

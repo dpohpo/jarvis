@@ -10,6 +10,11 @@ import {
   RelayClient,
   type TaskEvent,
   type TaskSummary,
+  type WorkspaceConfig,
+  type TmuxPaneInfo,
+  type EngineInfo,
+  type AgentInfo,
+  type AgentHistoryEntry,
   fromB64,
   generateIdentity,
   openPayload,
@@ -44,6 +49,24 @@ export interface JarvisCallbacks {
     durationMs: number,
     expectReply: boolean,
   ) => void;
+  /** Workspace list / active workspace changed (workspace.state from daemon). */
+  onWorkspaceState?: (active: string, workspaces: string[]) => void;
+  /** Memory list updated (memory.state from daemon). */
+  onMemoryState?: (items: Array<{ key: string; value: string; category: string; updatedAt: number }>) => void;
+  /** Settings changed (settings.state from daemon). */
+  onSettingsState?: (settings: Record<string, unknown>) => void;
+  /** History timeline (history.state from daemon). */
+  onHistoryState?: (entries: Array<{ taskId: string; ev: string; data: string; ts: number }>) => void;
+  /** Workspace configs map (workspace.config.state from daemon). */
+  onWorkspaceConfigs?: (configs: Record<string, WorkspaceConfig>) => void;
+  /** Discovered tmux panes (tmux.pane.state from daemon). */
+  onTmuxPanes?: (panes: TmuxPaneInfo[]) => void;
+  /** Engine availability (engine.state from daemon). */
+  onEngines?: (engines: EngineInfo[]) => void;
+  /** Agent list snapshot (agent.state from daemon). */
+  onAgentState?: (agents: AgentInfo[]) => void;
+  /** Agent history replay (agent.history.state from daemon). */
+  onAgentHistory?: (agentId: string, entries: AgentHistoryEntry[]) => void;
 }
 
 /** Scan result → paired PhoneState. Resolves once the daemon accepts. */
@@ -174,6 +197,95 @@ export class JarvisClient {
     this.send({ t: "task.list", seq: 0 } as never);
   }
 
+  requestWorkspaceList(): void {
+    this.send({ t: "workspace.list", seq: 0 } as never);
+  }
+
+  switchWorkspace(name: string): void {
+    this.send({ t: "workspace.switch", seq: 0, name } as never);
+  }
+
+  // ---- memory / settings / history ---------------------------------------
+
+  requestMemoryList(): void {
+    this.send({ t: "memory.list", seq: 0 } as never);
+  }
+
+  updateMemory(key: string, value: string, category = "general"): void {
+    this.send({ t: "memory.update", seq: 0, key, value, category } as never);
+  }
+
+  deleteMemory(key: string): void {
+    this.send({ t: "memory.delete", seq: 0, key } as never);
+  }
+
+  requestSettings(): void {
+    this.send({ t: "settings.get", seq: 0 } as never);
+  }
+
+  setSetting(key: string, value: unknown): void {
+    this.send({ t: "settings.set", seq: 0, key, value } as never);
+  }
+
+  requestHistory(limit = 100): void {
+    this.send({ t: "history.list", seq: 0, limit } as never);
+  }
+
+  // ---- workspace config / tmux / engines (Phase F) ------------------------
+
+  setWorkspaceConfig(workspace: string, config: WorkspaceConfig): void {
+    this.send({ t: "workspace.config.update", seq: 0, workspace, config } as never);
+  }
+
+  requestTmuxPanes(): void {
+    this.send({ t: "tmux.pane.list", seq: 0 } as never);
+  }
+
+  requestEngines(): void {
+    this.send({ t: "engine.list", seq: 0 } as never);
+  }
+
+  // ---- agents (Phase G — multi-session, resumable) -----------------------
+
+  /** Ask the daemon for the current agent list. Daemon also pushes
+   *  agent.state proactively whenever an agent is created/updated/deleted. */
+  requestAgentList(): void {
+    this.send({ t: "agent.list", seq: 0 } as never);
+  }
+
+  /** Create a new agent. Daemon spawns the executor (tmux by default) and
+   *  pushes a fresh agent.state to all paired devices. */
+  createAgent(workspace: string, engine: "claude" | "codex", firstPrompt: string): void {
+    this.send({
+      t: "agent.create",
+      seq: 0,
+      workspace,
+      engine,
+      first_prompt: firstPrompt,
+    } as never);
+  }
+
+  /** Send a follow-up message to an existing agent (resume). Daemon will
+   *  inject via tmux send-keys (live session) or spawn with --resume <sid>. */
+  agentMessage(agentId: string, text: string): void {
+    this.send({ t: "agent.message", seq: 0, agent_id: agentId, text } as never);
+  }
+
+  /** Stop (kill tmux session / spawn) without deleting the record. */
+  agentStop(agentId: string): void {
+    this.send({ t: "agent.stop", seq: 0, agent_id: agentId } as never);
+  }
+
+  /** Delete the agent record (keeps underlying claude jsonl file). */
+  deleteAgent(agentId: string): void {
+    this.send({ t: "agent.delete", seq: 0, agent_id: agentId } as never);
+  }
+
+  /** Request historical messages for an agent (replay from jsonl). */
+  requestAgentHistory(agentId: string, limit = 100): void {
+    this.send({ t: "agent.history", seq: 0, agent_id: agentId, limit } as never);
+  }
+
   /** Stop a task (or everything if taskId omitted). Goes through the reliable
    *  channel (seq via outbox) — a bare seq:0 would be dropped as a duplicate. */
   stopTask(taskId?: string): void {
@@ -274,6 +386,33 @@ export class JarvisClient {
         break;
       case "asr.final":
         this.cb.onAsrFinal?.(payload.text);
+        break;
+      case "workspace.state":
+        this.cb.onWorkspaceState?.(payload.active, payload.workspaces);
+        break;
+      case "memory.state":
+        this.cb.onMemoryState?.(payload.items);
+        break;
+      case "settings.state":
+        this.cb.onSettingsState?.(payload.settings);
+        break;
+      case "history.state":
+        this.cb.onHistoryState?.(payload.entries);
+        break;
+      case "workspace.config.state":
+        this.cb.onWorkspaceConfigs?.(payload.configs);
+        break;
+      case "tmux.pane.state":
+        this.cb.onTmuxPanes?.(payload.panes);
+        break;
+      case "engine.state":
+        this.cb.onEngines?.(payload.engines);
+        break;
+      case "agent.state":
+        this.cb.onAgentState?.(payload.agents);
+        break;
+      case "agent.history.state":
+        this.cb.onAgentHistory?.(payload.agent_id, payload.entries);
         break;
       default:
         break;

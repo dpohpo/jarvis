@@ -9,12 +9,13 @@
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import WebSocket from "ws";
 import { ulid } from "ulid";
 import {
   Ack,
   type Envelope,
+  type EngineInfo,
   HelloPayload,
   Outbox,
   Inbox,
@@ -44,10 +45,36 @@ import {
 } from "./identity.js";
 import { TaskStore } from "./tasks/store.js";
 import { runClaudeCode } from "./executors/claude-code.js";
+import { runCodex, findCodexBin } from "./executors/codex.js";
+import {
+  createAgentManager,
+  reconcileAgents,
+  readClaudeHistory,
+  createAgent as agentsCreate,
+  listAgents as agentsList,
+  getAgent as agentsGet,
+  deleteAgent as agentsDelete,
+  agentSendKey,
+} from "./agents/manager.js";
+import { runTmuxInject } from "./executors/tmux-inject.js";
+import { detectTmuxPanes, tmuxAvailable } from "./executors/tmux-detect.js";
 import { ApprovalBroker, classifyCommand } from "./approval.js";
 import { pcm16ToWav } from "./voice/wav.js";
 import { ensureAsrSidecar, synthesizeAny, transcribeAny } from "./voice/local.js";
 import { route, type Turn } from "./brain/router.js";
+import { reloadIfStale } from "./brain/dict.js";
+import {
+  deleteMemory,
+  getAllSettings,
+  getAllWorkspaceConfigs,
+  getWorkspaceConfig,
+  listMemory,
+  setSetting,
+  setWorkspaceConfig,
+  setWorkspaceSessionId,
+  updateMemory,
+} from "./brain/storage.js";
+import { existsSync } from "node:fs";
 
 // load ~/.jarvis/env (KEY=value lines) before reading any config
 try {
@@ -69,11 +96,90 @@ await cryptoReady();
 mkdirSync(DEFAULT_WORKDIR, { recursive: true });
 
 const state: DaemonState = loadOrCreateState(RELAY_URL, DEFAULT_WORKDIR);
+if (state.activeWorkspace == null) state.activeWorkspace = "";
 const room = roomOf(state);
 const store = new TaskStore();
 store.markOrphans();
 const approvals = new ApprovalBroker();
 ensureAsrSidecar();
+
+// ---- agent manager (Phase G) -----------------------------------------------
+// Forward-declared; wired up after `sendTo` / `broadcast` are defined below.
+let agentManager_spawn: (agentId: string, text: string, from: string, backend?: "tmux" | "spawn") => { ok: boolean; reason?: string } = () => ({ ok: false, reason: "not initialized" });
+let agentManager_stop: (agentId: string) => boolean = () => false;
+let agentManager_listForPush: () => Array<{ id: string; workspace: string; engine: "claude" | "codex"; session_id?: string; title: string; created_at: number; last_active: number; status: "idle" | "running" | "done" | "error"; cwd: string; message_count: number }> = () => [];
+let agentManager_sendKey: (agentId: string, key: string) => boolean = () => false;
+
+// ---- session stickiness (attach-like behaviour) ----------------------------
+// Per-workdir cache of the most recent Claude Code session id, so consecutive
+// voice turns in the same workspace resume the prior conversation instead of
+// starting cold. Rebuilt from TaskStore on daemon start; updated live by the
+// onSessionId callback in runOneCmd().
+//
+// Trade-off: scope is workdir only (not per-device or per-workspace-slug).
+// Multiple devices sharing one workspace will collide on the same session —
+// acceptable for now, since Claude Code's jsonl format itself doesn't support
+// concurrent writers either.
+const lastSessionByWorkdir = new Map<string, string>();
+for (const t of store.list(100)) {
+  if (t.agentSessionId && !lastSessionByWorkdir.has(t.workdir)) {
+    lastSessionByWorkdir.set(t.workdir, t.agentSessionId);
+  }
+}
+if (lastSessionByWorkdir.size > 0) {
+  console.log(`[daemon] session: resumed ${lastSessionByWorkdir.size} workdir→sessionId binding(s) from history`);
+}
+
+// ---- workspace management ---------------------------------------------------
+// Workspaces are first-level subdirectories of state.workdir. The empty string
+// means "workdir root" (the historical default). Active workspace survives
+// daemon restarts via state.activeWorkspace in daemon.json.
+
+/** All workspace names = sorted subdirectory names of workdir. */
+function listWorkspaces(): string[] {
+  try {
+    return readdirSync(state.workdir)
+      .filter((name) => {
+        const p = join(state.workdir, name);
+        return !name.startsWith(".") && statSync(p).isDirectory();
+      })
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
+}
+
+/** Resolve the directory the next task runs in. Per-command override wins. */
+function currentWorkdir(): string {
+  const ws = state.activeWorkspace ?? "";
+  return ws ? join(state.workdir, ws) : state.workdir;
+}
+
+/** Resolve a workspace name (or "" for root) to an absolute cwd. */
+function resolveWsCwd(wsName: string): string {
+  const trimmed = (wsName ?? "").trim();
+  return trimmed ? join(state.workdir, trimmed) : state.workdir;
+}
+
+/** Switch the active workspace, creating it if missing. Empty name = root. */
+function switchWorkspace(name: string): string {
+  const trimmed = name.trim();
+  state.activeWorkspace = trimmed;
+  if (trimmed) mkdirSync(join(state.workdir, trimmed), { recursive: true });
+  saveState(state);
+  log(`workspace: active='${trimmed || "<root>"}'`);
+  return trimmed;
+}
+
+/** Push the current workspace state to every paired phone. */
+function broadcastWorkspaceState(): void {
+  broadcast(() => ({
+    t: "workspace.state",
+    seq: 0,
+    active: state.activeWorkspace ?? "",
+    workspaces: listWorkspaces(),
+  }));
+}
 
 const log = (msg: string) => console.log(`[daemon] ${msg}`);
 
@@ -122,6 +228,33 @@ function sendTo(deviceId: string, payload: Payload & { seq: number }): void {
 
 function broadcast(payloadOf: () => Payload & { seq: number }): void {
   for (const dev of state.devices) sendTo(dev.deviceId, payloadOf());
+}
+
+// ---- agent manager wiring (after sendTo / broadcast exist) -----------------
+{
+  const mgr = createAgentManager({
+    taskStore: store,
+    resolveCwd: resolveWsCwd,
+    broadcast: (make) => broadcast(() => make() as Payload & { seq: number }),
+    sendTo: (to, make) => sendTo(to, make() as Payload & { seq: number }),
+    log,
+  });
+  agentManager_spawn = mgr.spawn;
+  agentManager_stop = mgr.stop;
+  agentManager_sendKey = agentSendKey;
+  agentManager_listForPush = () =>
+    agentsList().map((a) => ({
+      id: a.id,
+      workspace: a.workspace,
+      engine: a.engine,
+      ...(a.session_id ? { session_id: a.session_id } : {}),
+      title: a.title,
+      created_at: a.created_at,
+      last_active: a.last_active,
+      status: a.status as "idle" | "running" | "done" | "error",
+      cwd: a.cwd,
+      message_count: a.message_count,
+    }));
 }
 
 /** Fire-and-forget voice-family send: own stream seq, kind:"voice", no outbox. */
@@ -216,13 +349,45 @@ async function handleVoiceEnd(from: string): Promise<void> {
     sendTo(from, { t: "asr.final", seq: 0, text });
     remember(from, "user", text);
 
-    // brain: clean + decide in one call (graceful: falls back to direct task)
-    const decision = await route(text, chatHistory.get(from) ?? []);
-    log(`brain: ${decision.action}${decision.task ? ` task='${decision.task.slice(0, 60)}'` : ""}`);
+    // Pick up dict edits without a daemon restart. The brain router reads the
+    // current vocabulary list when buildSystemPrompt() runs (next line).
+    reloadIfStale();
+
+    // brain: clean + decide in one call. The router's system prompt carries
+    // the user's vocabulary list, so the LLM itself corrects STT mishearings
+    // (English short tokens → Chinese homophones, slash-prefixed skill names,
+    // proper nouns) using pronunciation + context. No deterministic replace.
+    const decision = await route(text, chatHistory.get(from) ?? [], listWorkspaces());
+    log(`brain: ${decision.action}${decision.task ? ` task='${decision.task.slice(0, 60)}'` : ""}${decision.workspace ? ` ws='${decision.workspace}'` : ""}`);
+
+    if (decision.action === "workspace") {
+      // Validate the LLM-picked name; fall back to clarify if it doesn't exist.
+      // Empty string is always valid (= root workdir).
+      const want = decision.workspace.trim();
+      const available = listWorkspaces();
+      if (want && !available.includes(want)) {
+        // LLM hallucinated a name. Surface the closest matches so the user
+        // can pick the right one next turn.
+        await speakTo(from, `没有叫「${want}」的工作空间。可用:${available.join("、")}`, {
+          expectReply: true,
+        });
+        return;
+      }
+      switchWorkspace(want);
+      const displayName = want || "主目录";
+      remember(from, "assistant", decision.reply || `已切换到 ${displayName}`);
+      broadcast(() => ({
+        t: "workspace.state",
+        seq: 0,
+        active: state.activeWorkspace ?? "",
+        workspaces: available,
+      }));
+      await speakTo(from, decision.reply || `已切换到 ${displayName}`, { expectReply: true });
+      return;
+    }
 
     if (decision.action === "answer" || decision.action === "clarify") {
       remember(from, "assistant", decision.reply);
-      // show the reply as a chat line in the console too
       sendTo(from, {
         t: "task.event",
         seq: 0,
@@ -240,15 +405,45 @@ async function handleVoiceEnd(from: string): Promise<void> {
     // task: short spoken ack first, then execute with spoken result
     remember(from, "assistant", decision.reply || "好的。");
     void speakTo(from, decision.reply || "好的，这就去办。");
+
+    // Surface the cleaned/normalized task instruction on the phone so the
+    // user can see exactly what was dispatched to Claude Code — including any
+    // vocabulary corrections the LLM applied (e.g. "必海天" → "/bht").
+    const taskId = ulid();
+    const cmdId = randomId();
+    sendTo(from, {
+      t: "task.event",
+      seq: 0,
+      taskId,
+      cmdId,
+      ev: "output",
+      data: `📋 ${decision.task}`,
+      ts: Date.now(),
+    });
+
     enqueueCmd({
       from,
-      cmdId: randomId(),
+      cmdId,
+      taskId,
       text: decision.task || text,
       opts: { voiceReply: true },
     });
   } catch (e) {
-    log(`asr failed: ${String(e)}`);
-    void speakTo(from, "语音识别出错了。");
+    const msg = String(e);
+    // The catch wraps ASR + brain route + action dispatch. ASR errors and
+    // brain errors need different user-facing messages — otherwise a GLM
+    // rate-limit (1305) misleads the user into thinking their mic/STT is
+    // broken when the transcript was actually fine.
+    if (msg.includes("glm") || msg.includes("1305") || msg.includes("JARVIS_ZHIPU")) {
+      log(`brain failed: ${msg}`);
+      void speakTo(from, "AI 思考太忙了，请稍后再试。");
+    } else if (msg.includes("GLM-ASR") || msg.includes("local asr") || msg.includes("transcribe")) {
+      log(`asr failed: ${msg}`);
+      void speakTo(from, "语音识别出错了。");
+    } else {
+      log(`handleVoiceEnd failed: ${msg}`);
+      void speakTo(from, "内部出错了，请稍后再试。");
+    }
   }
 }
 
@@ -270,10 +465,21 @@ let draining = false;
 /** taskIds the user asked to stop before they even started running. */
 const cancelled = new Set<string>();
 
-/** Enqueue a command. Runs immediately if idle, otherwise queues (FIFO). */
-function enqueueCmd(item: Omit<QueueItem, "taskId">): string {
-  const taskId = ulid();
-  const full: QueueItem = { ...item, taskId };
+/**
+ * Enqueue a command. Runs immediately if idle, otherwise queues (FIFO).
+ * Caller may pass `taskId` to pre-allocate the id (e.g. to emit task.event
+ * with the same id before enqueue); otherwise a fresh ulid is generated.
+ */
+function enqueueCmd(item: Omit<QueueItem, "taskId"> & { taskId?: string }): string {
+  const taskId = item.taskId ?? ulid();
+  const full: QueueItem = {
+    from: item.from,
+    cmdId: item.cmdId,
+    text: item.text,
+    workdir: item.workdir,
+    opts: item.opts,
+    taskId,
+  };
   cmdQueue.push(full);
   const ahead = cmdQueue.length - 1 + (active ? 1 : 0);
   if (ahead > 0) {
@@ -333,7 +539,7 @@ function taskSummaries(): TaskSummary[] {
 
 async function runOneCmd(item: QueueItem): Promise<void> {
   const { from, cmdId, text, workdir, opts, taskId } = item;
-  const wd = workdir ?? state.workdir;
+  const wd = workdir ?? currentWorkdir();
   const verdict = classifyCommand(text, wd);
   store.create(taskId, text.slice(0, 120), wd);
   log(`cmd ${cmdId} → task ${taskId} (tier ${verdict.tier}: ${verdict.reason})`);
@@ -369,12 +575,53 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   }
 
   store.setStatus(taskId, "running");
-  const task = runClaudeCode({
-    prompt: text,
-    workdir: wd,
-    onSessionId: (sid) => store.setAgentSession(taskId, sid),
-    onEvent: (e) => emit(e.ev, e.data),
-  });
+
+  // Dispatch by workspace config: tmux-inject | spawn-codex | spawn-claude.
+  const wsName = state.activeWorkspace ?? "";
+  const wsConfig = getWorkspaceConfig(wsName);
+  const resumeFrom = wsConfig.sessionId ?? lastSessionByWorkdir.get(wd);
+  if (resumeFrom && wsConfig.mode === "spawn") {
+    log(`session: resuming ${taskId} from prior session ${resumeFrom.slice(0, 8)}… in ${wd}`);
+  }
+
+  type AnyTask = { kill: () => void; done: Promise<{ ok: boolean; result: string }> };
+  let task: AnyTask;
+
+  if (wsConfig.mode === "tmux" && wsConfig.tmuxTarget) {
+    log(`dispatch: tmux-inject → ${wsConfig.tmuxTarget} (engine=${wsConfig.engine})`);
+    task = runTmuxInject({
+      target: wsConfig.tmuxTarget,
+      prompt: text,
+      onEvent: (e) => emit(e.ev, e.data),
+    });
+  } else if (wsConfig.engine === "codex") {
+    log(`dispatch: spawn codex in ${wd}`);
+    task = runCodex({
+      prompt: text,
+      workdir: wd,
+      resumeSessionId: resumeFrom,
+      onSessionId: (sid) => {
+        store.setAgentSession(taskId, sid);
+        lastSessionByWorkdir.set(wd, sid);
+        setWorkspaceSessionId(wsName, sid);
+      },
+      onEvent: (e) => emit(e.ev, e.data),
+    });
+  } else {
+    log(`dispatch: spawn claude in ${wd}`);
+    task = runClaudeCode({
+      prompt: text,
+      workdir: wd,
+      resumeSessionId: resumeFrom,
+      onSessionId: (sid) => {
+        store.setAgentSession(taskId, sid);
+        lastSessionByWorkdir.set(wd, sid);
+        setWorkspaceSessionId(wsName, sid);
+      },
+      onEvent: (e) => emit(e.ev, e.data),
+    });
+  }
+
   active = { taskId, from, kill: task.kill };
   const { ok, result } = await task.done;
   active = null;
@@ -387,6 +634,52 @@ async function runOneCmd(item: QueueItem): Promise<void> {
 }
 
 // ---- payload routing --------------------------------------------------------
+
+/** Probe which agent CLIs are installed + logged in. Cheap, sync, cacheable. */
+function detectEngines(): EngineInfo[] {
+  const claudePath = [
+    process.env.JARVIS_CLAUDE_BIN,
+    "/opt/homebrew/bin/claude",
+    "/usr/local/bin/claude",
+    `${process.env.HOME}/.claude/local/claude`,
+  ].find((p): p is string => !!p && existsSync(p));
+  const codexPath = findCodexBin();
+
+  // Logged-in heuristics:
+  //   claude: ~/.claude/.credentials.json OR env ANTHROPIC_API_KEY/AUTH_TOKEN set
+  //   codex:  ~/.codex/auth.json exists and non-empty
+  const claudeCreds =
+    existsSync(join(homedir(), ".claude", ".credentials.json")) ||
+    !!process.env.ANTHROPIC_API_KEY ||
+    !!process.env.ANTHROPIC_AUTH_TOKEN ||
+    !!process.env.ZHIPU_API_KEY;
+  const codexAuthFile = join(homedir(), ".codex", "auth.json");
+  const codexLoggedIn = existsSync(codexAuthFile);
+
+  return [
+    {
+      engine: "claude",
+      installed: !!claudePath,
+      ...(claudePath ? { path: claudePath } : {}),
+      loggedIn: claudeCreds,
+    },
+    {
+      engine: "codex",
+      installed: !!codexPath,
+      ...(codexPath ? { path: codexPath } : {}),
+      loggedIn: codexLoggedIn,
+    },
+  ];
+}
+
+/** Push the full workspace-config map to a single device. */
+function pushWorkspaceConfigs(to: string): void {
+  sendTo(to, {
+    t: "workspace.config.state",
+    seq: 0,
+    configs: getAllWorkspaceConfigs(),
+  });
+}
 
 function handlePayload(from: string, payload: Payload): void {
   // voice family bypasses the reliable channel entirely
@@ -422,6 +715,18 @@ function handlePayload(from: string, payload: Payload): void {
         );
       }
       log(`hello from ${from}, replayed from seq ${resumeFrom}`);
+      // Push current workspace configs + engine availability so the phone UI
+      // can populate the mode/engine pickers immediately after pairing.
+      pushWorkspaceConfigs(from);
+      sendTo(from, { t: "engine.state", seq: 0, engines: detectEngines() });
+      // Push the current agent list so the phone can render the "会话"
+      // picker immediately — without this the user sees an empty list
+      // until they manually open the sheet, which would defeat resume.
+      sendTo(from, {
+        t: "agent.state",
+        seq: 0,
+        agents: agentManager_listForPush(),
+      });
       break;
     }
     case "ack":
@@ -440,6 +745,181 @@ function handlePayload(from: string, payload: Payload): void {
       break;
     case "task.list":
       sendTo(from, { t: "task.state", seq: 0, tasks: taskSummaries() });
+      break;
+    case "workspace.list":
+      sendTo(from, {
+        t: "workspace.state",
+        seq: 0,
+        active: state.activeWorkspace ?? "",
+        workspaces: listWorkspaces(),
+      });
+      break;
+    case "workspace.switch":
+      switchWorkspace(payload.name);
+      sendTo(from, {
+        t: "workspace.state",
+        seq: 0,
+        active: state.activeWorkspace ?? "",
+        workspaces: listWorkspaces(),
+      });
+      // Also refresh config + engine state so the phone renders the right
+      // mode/engine badge for the newly-active workspace.
+      pushWorkspaceConfigs(from);
+      sendTo(from, { t: "engine.state", seq: 0, engines: detectEngines() });
+      break;
+    case "memory.list":
+      sendTo(from, {
+        t: "memory.state",
+        seq: 0,
+        items: listMemory(),
+      });
+      break;
+    case "memory.update": {
+      updateMemory(payload.key, payload.value, payload.category);
+      // broadcast updated state to all devices (memory is global)
+      broadcast(() => ({
+        t: "memory.state",
+        seq: 0,
+        items: listMemory(),
+      }));
+      break;
+    }
+    case "memory.delete": {
+      deleteMemory(payload.key);
+      broadcast(() => ({
+        t: "memory.state",
+        seq: 0,
+        items: listMemory(),
+      }));
+      break;
+    }
+    case "settings.get":
+      sendTo(from, {
+        t: "settings.state",
+        seq: 0,
+        settings: getAllSettings(),
+      });
+      break;
+    case "settings.set": {
+      const r = setSetting(payload.key, payload.value);
+      if (!r.ok) {
+        log(`settings.set rejected: ${r.reason}`);
+      }
+      // broadcast new state regardless (so phone sees canonical values)
+      broadcast(() => ({
+        t: "settings.state",
+        seq: 0,
+        settings: getAllSettings(),
+      }));
+      break;
+    }
+    case "history.list": {
+      const limit = payload.limit ?? 100;
+      const entries = store.listEvents(limit);
+      sendTo(from, {
+        t: "history.state",
+        seq: 0,
+        entries,
+      });
+      break;
+    }
+    case "workspace.config.update": {
+      const updated = setWorkspaceConfig(payload.workspace, payload.config);
+      log(`workspace.config.update: ${payload.workspace} → ${updated.mode}/${updated.engine}` +
+        (updated.tmuxTarget ? ` target=${updated.tmuxTarget}` : ""));
+      // broadcast to all devices so every phone sees the same config
+      broadcast(() => ({
+        t: "workspace.config.state",
+        seq: 0,
+        configs: getAllWorkspaceConfigs(),
+      }));
+      break;
+    }
+    case "tmux.pane.list": {
+      void (async () => {
+        const available = await tmuxAvailable();
+        if (!available) {
+          sendTo(from, { t: "tmux.pane.state", seq: 0, panes: [] });
+          return;
+        }
+        const panes = await detectTmuxPanes();
+        log(`tmux.pane.list: ${panes.length} panes (claude/codex/unknown)`);
+        sendTo(from, { t: "tmux.pane.state", seq: 0, panes });
+      })();
+      break;
+    }
+    case "engine.list": {
+      sendTo(from, { t: "engine.state", seq: 0, engines: detectEngines() });
+      break;
+    }
+    // ---- agents (Phase G) ----
+    case "agent.list": {
+      sendTo(from, { t: "agent.state", seq: 0, agents: agentManager_listForPush() });
+      break;
+    }
+    case "agent.create": {
+      const wsName = payload.workspace;
+      const cwd = resolveWsCwd(wsName);
+      const title = payload.first_prompt.trim().slice(0, 60) || "新会话";
+      const agent = agentsCreate({
+        workspace: wsName,
+        engine: payload.engine,
+        cwd,
+        title,
+      });
+      log(`agent.create: ${agent.id} ws=${wsName} engine=${payload.engine} title="${title}"`);
+      // Spawn the first message immediately.
+      const r = agentManager_spawn(agent.id, payload.first_prompt, from);
+      if (!r.ok) log(`agent.create spawn failed: ${r.reason}`);
+      // Push fresh agent list to all devices.
+      broadcast(() => ({ t: "agent.state", seq: 0, agents: agentManager_listForPush() }));
+      break;
+    }
+    case "agent.message": {
+      const r = agentManager_spawn(payload.agent_id, payload.text, from);
+      if (!r.ok) {
+        log(`agent.message ${payload.agent_id} rejected: ${r.reason}`);
+      }
+      break;
+    }
+    case "agent.stop": {
+      agentManager_stop(payload.agent_id);
+      broadcast(() => ({ t: "agent.state", seq: 0, agents: agentManager_listForPush() }));
+      break;
+    }
+    case "agent.delete": {
+      agentManager_stop(payload.agent_id);
+      agentsDelete(payload.agent_id);
+      broadcast(() => ({ t: "agent.state", seq: 0, agents: agentManager_listForPush() }));
+      break;
+    }
+    case "agent.history": {
+      const agent = agentsGet(payload.agent_id);
+      if (!agent?.session_id) {
+        sendTo(from, {
+          t: "agent.history.state",
+          seq: 0,
+          agent_id: payload.agent_id,
+          entries: [],
+        });
+        break;
+      }
+      const entries =
+        agent.engine === "codex"
+          ? [] // codex history reading not implemented yet
+          : readClaudeHistory(agent.session_id, payload.limit ?? 100);
+      sendTo(from, {
+        t: "agent.history.state",
+        seq: 0,
+        agent_id: payload.agent_id,
+        entries,
+      });
+      break;
+    }
+    case "task.card.action":
+      // For now, route task card button taps as plain text commands so the
+      // brain re-interprets them. Later we can have structured dispatch.
+      log(`task.card.action: taskId=${payload.taskId} action=${payload.actionId}`);
       break;
     default:
       log(`unhandled payload ${payload.t} from ${from}`);
@@ -492,6 +972,24 @@ const relay = new RelayClient({
 });
 relay.start();
 
+// Reconcile agent state after daemon restart:
+//   - reattach capture-pane pollers to agents whose tmux sessions survived
+//   - flip agents whose tmux is gone (Mac rebooted) to idle
+//   - backfill missing session_ids for older agents
+// Done synchronously after relay is up so the first paired device to hello
+// already sees a consistent agent.state.
+try {
+  reconcileAgents({
+    taskStore: store,
+    resolveCwd: resolveWsCwd,
+    broadcast: (make) => broadcast(() => make() as Payload & { seq: number }),
+    sendTo: (to, make) => sendTo(to, make() as Payload & { seq: number }),
+    log,
+  });
+} catch (e) {
+  log(`reconcileAgents failed (non-fatal): ${e}`);
+}
+
 // ---- local admin (127.0.0.1 only) --------------------------------------------
 
 const admin = createServer((req, res) => {
@@ -517,8 +1015,108 @@ const admin = createServer((req, res) => {
         relayUp: relay.isUp,
         devices: state.devices.map((d) => ({ id: d.deviceId, name: d.name })),
         tasks: taskSummaries().slice(0, 10),
+        activeWorkspace: state.activeWorkspace ?? "",
+        workspaces: listWorkspaces(),
       }),
     );
+    return;
+  }
+  if (req.method === "GET" && req.url === "/workspaces") {
+    res.end(
+      JSON.stringify({
+        active: state.activeWorkspace ?? "",
+        workspaces: listWorkspaces(),
+        root: state.workdir,
+      }),
+    );
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/workspaces/switch")) {
+    const url = new URL(req.url, "http://localhost");
+    const name = url.searchParams.get("name") ?? "";
+    const active = switchWorkspace(name);
+    broadcastWorkspaceState();
+    res.end(
+      JSON.stringify({
+        ok: true,
+        active,
+        workspaces: listWorkspaces(),
+      }),
+    );
+    return;
+  }
+  // ---- agents HTTP API (for desktop app — not a paired relay device) ----
+  if (req.method === "GET" && req.url === "/agents/list") {
+    res.end(JSON.stringify(agentManager_listForPush()));
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/agents/create")) {
+    // Read body (workspace + engine + first_prompt).
+    let body = "";
+    req.on("data", (c) => (body += c.toString()));
+    req.on("end", () => {
+      try {
+        const { workspace, engine, first_prompt } = JSON.parse(body) as {
+          workspace: string;
+          engine: "claude" | "codex";
+          first_prompt: string;
+        };
+        const cwd = resolveWsCwd(workspace);
+        const title = first_prompt.trim().slice(0, 60) || "新会话";
+        const agent = agentsCreate({ workspace, engine, cwd, title });
+        const r = agentManager_spawn(agent.id, first_prompt, "desktop-admin");
+        log(`admin /agents/create: ${agent.id} ok=${r.ok} reason=${r.reason ?? ""}`);
+        res.end(JSON.stringify({ ok: r.ok, agent_id: agent.id, reason: r.reason }));
+      } catch (e) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ ok: false, error: String(e) }));
+      }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/agents/message")) {
+    let body = "";
+    req.on("data", (c) => (body += c.toString()));
+    req.on("end", () => {
+      try {
+        const { agent_id, text } = JSON.parse(body) as { agent_id: string; text: string };
+        const r = agentManager_spawn(agent_id, text, "desktop-admin");
+        res.end(JSON.stringify({ ok: r.ok, reason: r.reason }));
+      } catch (e) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ ok: false, error: String(e) }));
+      }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/agents/stop")) {
+    const url = new URL(req.url, "http://localhost");
+    const id = url.searchParams.get("id") ?? "";
+    const ok = agentManager_stop(id);
+    res.end(JSON.stringify({ ok }));
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/agents/send-key")) {
+    let body = "";
+    req.on("data", (c) => (body += c.toString()));
+    req.on("end", () => {
+      try {
+        const { agent_id, key } = JSON.parse(body) as { agent_id: string; key: string };
+        const ok = agentManager_sendKey(agent_id, key);
+        res.end(JSON.stringify({ ok }));
+      } catch (e) {
+        res.statusCode = 400;
+        res.end(JSON.stringify({ ok: false, error: String(e) }));
+      }
+    });
+    return;
+  }
+  if (req.method === "POST" && req.url?.startsWith("/agents/delete")) {
+    const url = new URL(req.url, "http://localhost");
+    const id = url.searchParams.get("id") ?? "";
+    agentManager_stop(id);
+    const ok = agentsDelete(id);
+    res.end(JSON.stringify({ ok }));
     return;
   }
   res.statusCode = 404;

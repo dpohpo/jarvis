@@ -91,6 +91,16 @@ export class TaskStore {
     return rows.map((r) => this.mapRow(r)!);
   }
 
+  /** Recent events across all tasks, newest first — used by the history view. */
+  listEvents(limit = 100): Array<{ taskId: string; ev: string; data: string; ts: number }> {
+    const rows = this.db
+      .prepare(
+        "SELECT task_id AS taskId, ev, data, ts FROM events ORDER BY ts DESC LIMIT ?",
+      )
+      .all(limit) as Array<{ taskId: string; ev: string; data: string; ts: number }>;
+    return rows;
+  }
+
   /** Anything still marked running when the daemon starts was orphaned by a crash. */
   markOrphans(): void {
     this.db

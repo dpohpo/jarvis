@@ -1,0 +1,586 @@
+/**
+ * tmux runner — runs each agent inside a visible tmux session.
+ *
+ * Each agent gets its own tmux session named `jarvis-<agentId>`. Inside the
+ * session we run `claude --resume <id>` (or `codex`) in interactive TUI mode
+ * — NOT `-p` headless. The user can `tmux attach -t jarvis-<id>` anytime to
+ * see the live terminal and take over input.
+ *
+ * Output capture: a poller reads `tmux capture-pane -p` every 800ms, diffs
+ * against the last snapshot, and emits new lines as `progress` events so
+ * the existing desktop TaskStream / AgentView UIs keep working.
+ *
+ * Message injection: `tmux send-keys -t <session> "<text>" Enter` drops the
+ * user's follow-up into the live TUI — exactly like the user typing it.
+ */
+import { spawn, execSync } from "node:child_process";
+import { existsSync, writeFileSync, mkdirSync, unlinkSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import type { TaskStore } from "../tasks/store.js";
+
+export interface TmuxRunnerOpts {
+  agentId: string;
+  cwd: string;
+  engine: "claude" | "codex";
+  /** Initial prompt (for first spawn). Empty for "attach-only" resume. */
+  firstPrompt?: string;
+  /** Existing session_id to resume; undefined for fresh spawn. */
+  resumeSessionId?: string;
+  /** TaskStore to log events into (mirrors tmux output as task events). */
+  taskStore: TaskStore;
+  /** Task id under which events are filed. */
+  taskId: string;
+  /** Logger. */
+  log: (msg: string) => void;
+  /** Fired the first time we observe a freshly-written claude-code session jsonl
+   *  for this agent's cwd. Used to capture session_id so the agent can be
+   *  resumed across daemon restarts. */
+  onSessionId?: (sid: string) => void;
+}
+
+/**
+ * Encode a cwd path the way claude-code does for ~/.claude/projects/ subdirs.
+ * Each character that is NOT [a-zA-Z0-9._-] becomes "-". So:
+ *   /Users/poincare/foo            → -Users-poincare-foo
+ *   /Volumes/金阳/Documents/amazon → -Volumes----Documents-amazon
+ * Verified against the actual layout in ~/.claude/projects/.
+ */
+function encodeCwd(p: string): string {
+  let out = "";
+  for (const ch of p) {
+    out += /[a-zA-Z0-9._-]/.test(ch) ? ch : "-";
+  }
+  return out;
+}
+
+const CLAUDE_BIN = [
+  process.env.JARVIS_CLAUDE_BIN,
+  "/opt/homebrew/bin/claude",
+  "/usr/local/bin/claude",
+  `${homedir()}/.claude/local/claude`,
+].find((p): p is string => !!p && existsSync(p)) ?? "claude";
+
+const FREE_CODE_BIN = [
+  process.env.JARVIS_FREE_CODE_BIN,
+  `${homedir()}/bin/free-code`,
+].find((p): p is string => !!p && existsSync(p));
+
+const FREE_CODE_PROFILES = process.env.FREECODE_MODEL_PROFILES ??
+  `${homedir()}/.config/free-code/agent-team-model-profiles.json`;
+
+const FREE_CODE_SKILL_PROMPT = `${homedir()}/.config/free-code/skill-enforcement-prompt.txt`;
+
+const CODEX_BIN = [
+  process.env.JARVIS_CODEX_BIN,
+  "/opt/homebrew/bin/codex",
+  "/usr/local/bin/codex",
+].find((p): p is string => !!p && existsSync(p)) ?? "codex";
+
+function sessionName(agentId: string): string {
+  // tmux session names can't contain `.` or `:`.
+  return `jarvis-${agentId.replace(/[.:]/g, "-")}`;
+}
+
+function tmux(args: string[]): string {
+  try {
+    return execSync(`tmux ${args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(" ")}`, {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 2000,
+    });
+  } catch {
+    return "";
+  }
+}
+
+function hasSession(name: string): boolean {
+  try {
+    execSync(`tmux has-session -t '${name}' 2>/dev/null`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "").replace(/\x1b[()][AB012]/g, "").replace(/\x1b[=>]/g, "").trim();
+}
+
+/** Start a tmux session for an agent. Returns true if session was created. */
+export function startAgentTmux(opts: TmuxRunnerOpts): boolean {
+  const name = sessionName(opts.agentId);
+  if (hasSession(name)) {
+    opts.log(`tmux runner: session ${name} already exists`);
+    return false;
+  }
+
+  // Record start time so the session_id poller can ignore pre-existing .jsonl
+  // files in ~/.claude/projects/<encoded-cwd>/.
+  (opts as TmuxRunnerOpts & { _startMs?: number })._startMs = Date.now();
+
+  // Resolve the inner command — different paths for claude vs codex.
+  const innerCmd = buildInnerCommand(opts);
+  if (!innerCmd) {
+    opts.log(`tmux runner: failed to build inner command for ${opts.engine}`);
+    return false;
+  }
+
+  // Write the inner command to a shell script so tmux can run it without
+  // worrying about nested-quote escaping. Each agent gets its own script.
+  const scriptDir = `/tmp/jarvis-agent-scripts`;
+  try {
+    mkdirSync(scriptDir, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+  const scriptPath = `${scriptDir}/${opts.agentId}.sh`;
+  try {
+    writeFileSync(
+      scriptPath,
+      `#!/bin/bash\n# Auto-generated by Jarvis daemon — runs inside tmux session ${name}\n${innerCmd}\n`,
+      { mode: 0o755 },
+    );
+  } catch (e) {
+    opts.log(`tmux runner: failed to write script ${scriptPath}: ${e}`);
+    return false;
+  }
+
+  // Run inside tmux detached (-d). The script provides a clean execution
+  // context with PTY, no shell-escape issues.
+  const cmd = `tmux new-session -d -s '${name}' '${scriptPath}'`;
+
+  try {
+    execSync(cmd, { stdio: "ignore" });
+  } catch (e) {
+    opts.log(`tmux runner: failed to create session ${name}: ${e}`);
+    return false;
+  }
+  opts.log(`tmux runner: session ${name} started (${opts.engine}, cwd=${opts.cwd}, script=${scriptPath})`);
+
+  // Send first prompt (if any) into the TUI.
+  if (opts.firstPrompt && opts.firstPrompt.trim()) {
+    setTimeout(() => sendKeys(opts.agentId, opts.firstPrompt!), 1500);
+  }
+
+  // Start the capture-pane poller.
+  startCapturePoller(opts);
+  return true;
+}
+
+/**
+ * Build the shell command string to run INSIDE the tmux pane.
+ *
+ * Claude path (preferred): use ~/bin/free-code wrapper with GLM profile,
+ *   replicating what `glmtmux-new` does — unset ANTHROPIC_* so claude
+ *   doesn't try to use Anthropic's official API, load GLM settings file,
+ *   run with --model glm-5.2. We mirror `_freecode_model_tmux glm` from the
+ *   user's ~/.zshrc verbatim.
+ *
+ * Claude fallback (no free-code): plain `claude` — will likely 401 unless
+ *   the user has exported ANTHROPIC_* to GLM via shell rc.
+ *
+ * Codex path: plain `codex` — assumes ~/.codex/auth.json already holds
+ *   the user's codex login.
+ */
+function buildInnerCommand(opts: TmuxRunnerOpts): string | null {
+  // IMPORTANT: every line must be a complete shell statement. We use
+  // newlines as separators so the bash script parses cleanly. Earlier
+  // version joined with " " which produced `cd '/path' env -u ...` —
+  // bash treated that as a single `cd` into a directory literally named
+  // "/path env -u ..." which failed silently.
+  const cd = `cd '${opts.cwd}'`;
+  const resumeArg = opts.resumeSessionId ? ` --resume ${opts.resumeSessionId}` : "";
+  const exitMarker = `echo '__JARVIS_AGENT_EXIT__'`;
+
+  if (opts.engine === "claude") {
+    if (FREE_CODE_BIN) {
+      // Replicate _freecode_model_tmux glm <session> from ~/.zshrc.
+      // The settings file lives at $TMPDIR/freecode-settings/glm.json — but
+      // daemon's TMPDIR may differ from zsh's. We resolve the actual path by
+      // asking zsh to run _freecode_model_resolve, then echoing the path.
+      let settingsPath = "";
+      try {
+        const zshOut = execSync(
+          `zsh -c 'source ~/.zshrc 2>/dev/null; _freecode_model_resolve glm >/dev/null 2>&1; echo "${'$'}{TMPDIR:-/tmp}/freecode-settings/glm.json"'`,
+          { encoding: "utf8", timeout: 5000, stdio: ["pipe", "pipe", "pipe"] },
+        ).trim();
+        if (zshOut.endsWith("/glm.json") && existsSync(zshOut)) {
+          settingsPath = zshOut;
+        }
+      } catch (e) {
+        opts.log(`tmux runner: _freecode_model_resolve failed: ${e}`);
+      }
+
+      if (!settingsPath) {
+        opts.log(`tmux runner: no free-code settings — falling back to plain claude`);
+        return [cd, `${CLAUDE_BIN}${resumeArg} 2>&1`, exitMarker].join("\n");
+      }
+
+      const extraPromptFlag = existsSync(FREE_CODE_SKILL_PROMPT)
+        ? `--append-system-prompt-file '${FREE_CODE_SKILL_PROMPT}'`
+        : "";
+
+      // Build env + free-code args as ONE line (so env applies to free-code),
+      // then prepend cd as its own line. Use \\\n inside the join so the
+      // bash script sees actual newlines.
+      const envAndExec = [
+        "env",
+        "-u", "ANTHROPIC_API_KEY",
+        "-u", "ANTHROPIC_AUTH_TOKEN",
+        "-u", "ANTHROPIC_BASE_URL",
+        "-u", "ANTHROPIC_MODEL",
+        "-u", "CLAUDE_CODE_DISABLE_1M_CONTEXT",
+        `CLAUDE_CODE_TEAMMATE_COMMAND='${FREE_CODE_BIN}'`,
+        `'${FREE_CODE_BIN}'`,
+        "--dangerously-skip-permissions",
+        "--permission-mode", "bypassPermissions",
+        ...(extraPromptFlag ? [extraPromptFlag] : []),
+        "--settings", `'${settingsPath}'`,
+        "--model", "glm-5.2",
+        resumeArg,
+      ].join(" ");
+
+      opts.log(`tmux runner: claude via free-code, settings=${settingsPath}`);
+      return [cd, `${envAndExec} 2>&1`, exitMarker].join("\n");
+    }
+    // Fallback: plain claude (will 401 if no env override).
+    return [cd, `${CLAUDE_BIN}${resumeArg} 2>&1`, exitMarker].join("\n");
+  }
+
+  // Codex: plain codex CLI (assumes ~/.codex/auth.json logged in).
+  return [cd, `${CODEX_BIN}${resumeArg} 2>&1`, exitMarker].join("\n");
+}
+
+/** Send a message into the agent's live tmux session (user-style typing). */
+export function sendKeys(agentId: string, text: string): boolean {
+  const name = sessionName(agentId);
+  if (!hasSession(name)) return false;
+  // send-keys -l so tmux doesn't reinterpret `{`, `}`, `$` as key syntax.
+  // Multi-line text: split on \n and send each line followed by the literal
+  // Enter key.
+  const lines = text.replace(/\r/g, "").split("\n");
+  for (const line of lines) {
+    execSync(
+      `tmux send-keys -t '${name}' -l '${line.replace(/'/g, "'\\''")}'`,
+      { stdio: "ignore" },
+    );
+    execSync(`tmux send-keys -t '${name}' Enter`, { stdio: "ignore" });
+  }
+  return true;
+}
+
+/**
+ * Send a special tmux key (Ctrl+C, Escape, Tab, Shift+Tab, etc).
+ * tmux's send-keys accepts key names like "C-c", "Escape", "Tab", "BTab",
+ * "Up", "Down", "Enter", "Space". We whitelist the safe ones.
+ */
+const SPECIAL_KEYS = new Set([
+  "C-c", "C-d", "C-z", "C-l", "C-u", "C-w",
+  "Escape", "Tab", "BTab",
+  "Up", "Down", "Left", "Right",
+  "Enter", "Space", "Home", "End", "PageUp", "PageDown",
+]);
+
+export function sendSpecialKey(agentId: string, keyName: string): boolean {
+  if (!SPECIAL_KEYS.has(keyName)) return false;
+  const name = sessionName(agentId);
+  if (!hasSession(name)) return false;
+  try {
+    execSync(`tmux send-keys -t '${name}' '${keyName}'`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Read the visible pane content as plain text (ANSI stripped). */
+export function captureAgentPane(agentId: string): string {
+  const name = sessionName(agentId);
+  if (!hasSession(name)) return "";
+  try {
+    const raw = execSync(`tmux capture-pane -p -t '${name}' -S -60`, {
+      encoding: "utf8",
+      timeout: 800,
+    });
+    return stripAnsi(raw);
+  } catch {
+    return "";
+  }
+}
+
+/** Kill the agent's tmux session (and the claude/codex process inside). */
+export function killAgentTmux(agentId: string): boolean {
+  const name = sessionName(agentId);
+  if (!hasSession(name)) return false;
+  try {
+    execSync(`tmux kill-session -t '${name}'`, { stdio: "ignore" });
+    // Clean up the launch script too.
+    try {
+      unlinkSync(`/tmp/jarvis-agent-scripts/${agentId}.sh`);
+    } catch {
+      /* ignore */
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isAgentTmuxAlive(agentId: string): boolean {
+  return hasSession(sessionName(agentId));
+}
+
+/** The tmux session name (for "open in Ghostty" buttons). */
+export function agentTmuxSessionName(agentId: string): string {
+  return sessionName(agentId);
+}
+
+// ---------- capture-pane poller ----------
+
+const pollers = new Map<string, { timer: NodeJS.Timeout; lastSnapshot: string[]; exited: boolean }>();
+
+function startCapturePoller(opts: TmuxRunnerOpts): void {
+  const name = sessionName(opts.agentId);
+  const { taskStore, taskId, log } = opts;
+  let lastSnapshot: string[] = [];
+  let waitingNotified = false;
+  let sessionIdCaptured = false;
+  const startMs = (opts as TmuxRunnerOpts & { _startMs?: number })._startMs ?? Date.now();
+
+  /**
+   * Try to capture the claude-code session_id for this agent by scanning
+   * ~/.claude/projects/<encoded-cwd>/ for a .jsonl file newer than startMs.
+   * The filename (minus .jsonl) IS the session_id claude-code uses for --resume.
+   *
+   * Why this approach: claude-code prints no machine-readable session header
+   * to stdout that we could parse from capture-pane. But it always writes
+   * <sessionId>.jsonl in the projects dir on its first message. That file
+   * appearance is the most reliable signal we have.
+   *
+   * Fires at most once per agent — sets sessionIdCaptured after success.
+   */
+  const tryCaptureSessionId = () => {
+    if (sessionIdCaptured || !opts.onSessionId) return;
+    const projectsDir = join(homedir(), ".claude", "projects");
+    if (!existsSync(projectsDir)) return;
+
+    const encoded = encodeCwd(opts.cwd);
+    type Cand = { sid: string; mtime: number };
+    const candidates: Cand[] = [];
+
+    // Primary: look in the exact encoded subdir for this cwd.
+    const primary = join(projectsDir, encoded);
+    if (existsSync(primary)) {
+      try {
+        for (const f of readdirSync(primary)) {
+          if (!f.endsWith(".jsonl")) continue;
+          const full = join(primary, f);
+          const st = statSync(full);
+          if (st.mtimeMs > startMs) {
+            candidates.push({ sid: f.replace(/\.jsonl$/, ""), mtime: st.mtimeMs });
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Fallback: scan all subdirs (slower; used if encoded-cwd rule drifts).
+    if (candidates.length === 0) {
+      try {
+        for (const sub of readdirSync(projectsDir)) {
+          const subPath = join(projectsDir, sub);
+          let isDir = false;
+          try {
+            isDir = statSync(subPath).isDirectory();
+          } catch {
+            /* ignore */
+          }
+          if (!isDir) continue;
+          for (const f of readdirSync(subPath)) {
+            if (!f.endsWith(".jsonl")) continue;
+            const full = join(subPath, f);
+            let st: { mtimeMs: number };
+            try {
+              st = statSync(full);
+            } catch {
+              continue;
+            }
+            if (st.mtimeMs > startMs) {
+              candidates.push({ sid: f.replace(/\.jsonl$/, ""), mtime: st.mtimeMs });
+            }
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (candidates.length === 0) return;
+    candidates.sort((a, b) => b.mtime - a.mtime);
+    const best = candidates[0];
+    if (!best) return;
+    sessionIdCaptured = true;
+    try {
+      opts.onSessionId(best.sid);
+      log(`tmux runner: captured session_id ${best.sid.slice(0, 8)}… for ${opts.agentId} (encoded=${encoded})`);
+    } catch (e) {
+      log(`tmux runner: onSessionId callback threw: ${e}`);
+    }
+  };
+
+  // Match lines that look like an approval / permission prompt from
+  // claude/codex TUI. Once we see one, we mark the task waiting_approval
+  // and stop re-firing on every poll until the prompt is cleared.
+  const APPROVAL_REGEX = /(\bpermission\b|\bapprove\b|\ballow\b|\by\/n\b|\(y\/n\)|yes.*no.*\(.*\)|trust.*project|claude\.ai\/trust|press enter to continue|press any key|⏵⏵.*permission|shift\+tab to cycle)/i;
+
+  const tick = () => {
+    if (!hasSession(name)) {
+      const p = pollers.get(name);
+      if (p && !p.exited) {
+        p.exited = true;
+        try {
+          taskStore.setStatus(taskId, "done");
+          taskStore.addEvent(taskId, "done", "(tmux session 结束 — claude/codex 退出)");
+        } catch {
+          /* ignore */
+        }
+        log(`tmux runner: session ${name} ended`);
+      }
+      return;
+    }
+
+    let raw = "";
+    try {
+      raw = execSync(`tmux capture-pane -p -t '${name}' -S -60`, {
+        encoding: "utf8",
+        timeout: 800,
+      });
+    } catch {
+      return;
+    }
+    const cleaned = stripAnsi(raw)
+      .split("\n")
+      .map((l) => l.trimEnd())
+      .filter((l) => l.length > 0);
+
+    // Approval-prompt detection.
+    const paneTail = cleaned.slice(-12).join("\n");
+    const wantsApproval = APPROVAL_REGEX.test(paneTail);
+    if (wantsApproval && !waitingNotified) {
+      waitingNotified = true;
+      try {
+        taskStore.setStatus(taskId, "waiting_approval");
+        taskStore.addEvent(taskId, "progress", "⏸ 检测到授权请求 — 点「批准」继续（或去 Ghostty 手动）");
+      } catch {
+        /* ignore */
+      }
+      log(`tmux runner: approval prompt detected for ${opts.agentId}`);
+    } else if (!wantsApproval && waitingNotified) {
+      // Approval cleared — agent moved on.
+      waitingNotified = false;
+      try {
+        taskStore.setStatus(taskId, "running");
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (lastSnapshot.length === 0) {
+      lastSnapshot = cleaned;
+      return;
+    }
+    const newLines = diffTail(lastSnapshot, cleaned);
+    lastSnapshot = cleaned;
+
+    if (newLines.length > 0) {
+      const meaningful = newLines.filter(
+        (l) =>
+          l.length > 2 &&
+          !l.startsWith(">") &&
+          !l.startsWith("❯") &&
+          !l.match(/^[●○◇]/) &&
+          !l.includes("__JARVIS_AGENT_EXIT__") &&
+          !l.match(/^\s*\^L\s*$/),
+      );
+      for (const line of meaningful) {
+        try {
+          taskStore.addEvent(taskId, "progress", line);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+
+    // Best-effort session_id capture (fires at most once).
+    tryCaptureSessionId();
+  };
+
+  const timer = setInterval(tick, 1200);
+  pollers.set(name, { timer, lastSnapshot: [], exited: false });
+}
+
+function diffTail(before: string[], after: string[]): string[] {
+  // Find the longest exact suffix of `before` inside `after`; everything
+  // after that point in `after` is "new".
+  let bi = before.length - 1;
+  let ai = after.length - 1;
+  while (bi >= 0 && ai >= 0 && before[bi] === after[ai]) {
+    bi--;
+    ai--;
+  }
+  return after.slice(ai + 1);
+}
+
+/** Stop the poller for an agent (called when agent is deleted). */
+export function stopPoller(agentId: string): void {
+  const name = sessionName(agentId);
+  const p = pollers.get(name);
+  if (p) {
+    clearInterval(p.timer);
+    pollers.delete(name);
+  }
+}
+
+/**
+ * Reattach a capture-pane poller to an existing tmux session — used at daemon
+ * startup to recover agents that were running before the daemon died.
+ *
+ * Pre-conditions:
+ *   - tmux session `jarvis-<agentId>` exists (caller already checked)
+ *   - taskId exists in taskStore (caller created it if needed)
+ *
+ * Returns true if a poller was (re)started.
+ */
+export function reattachPoller(opts: {
+  agentId: string;
+  taskId: string;
+  cwd: string;
+  engine: "claude" | "codex";
+  taskStore: TaskStore;
+  log: (msg: string) => void;
+}): boolean {
+  const name = sessionName(opts.agentId);
+  if (!hasSession(name)) return false;
+  // Kill any stale poller first (idempotent).
+  stopPoller(opts.agentId);
+  startCapturePoller({
+    agentId: opts.agentId,
+    cwd: opts.cwd,
+    engine: opts.engine,
+    taskStore: opts.taskStore,
+    taskId: opts.taskId,
+    log: opts.log,
+    // No firstPrompt — we're attaching to an already-running session.
+    // No onSessionId — if the session_id wasn't captured before daemon
+    // restart, we missed the window. The agent's first jsonl is already
+    // older than startMs, so capture would never fire anyway. The user
+    // can still manually resume via the agent's session_id (if it was
+    // captured before) — and future messages will hit the live session
+    // via tmux send-keys, which doesn't need session_id at all.
+  });
+  opts.log(`tmux runner: reattached poller to ${name} (taskId=${opts.taskId})`);
+  return true;
+}

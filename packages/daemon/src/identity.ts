@@ -35,6 +35,8 @@ export interface DaemonState {
   pairToken: { token: string; expiresAt: number } | null;
   /** Highest outgoing seq per peer — must survive restarts or peers drop us as duplicates. */
   channelSeqs?: Record<string, number>;
+  /** Active workspace name (subdirectory of workdir). "" = workdir root. Survives restart. */
+  activeWorkspace?: string;
 }
 
 const DIR = process.env.JARVIS_HOME ?? join(homedir(), ".jarvis");

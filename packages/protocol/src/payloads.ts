@@ -67,6 +67,33 @@ export const TaskListReq = z.object({
   seq: z.number().int(),
 });
 
+// ---- workspace family ------------------------------------------------------
+// Workspaces are subdirectories of the daemon's workdir (~/JarvisRemoteControl
+// by default). The phone can list them, switch the active one, and query the
+// current state. All subsequent cmd.submit executions land in the active
+// workspace unless the command itself carries an explicit workdir.
+
+/** Phone → daemon: list available workspaces (subdirs of workdir). */
+export const WorkspaceListReq = z.object({
+  t: z.literal("workspace.list"),
+  seq: z.number().int(),
+});
+
+/** Phone → daemon: switch the active workspace. `name` "" means the workdir root. */
+export const WorkspaceSwitch = z.object({
+  t: z.literal("workspace.switch"),
+  seq: z.number().int(),
+  name: z.string(),
+});
+
+/** Daemon → phone: current workspace + the full list. */
+export const WorkspaceState = z.object({
+  t: z.literal("workspace.state"),
+  seq: z.number().int(),
+  active: z.string(),
+  workspaces: z.array(z.string()),
+});
+
 /** Phone → daemon: stop a running/queued task. Omit taskId to stop everything. */
 export const TaskStop = z.object({
   t: z.literal("task.stop"),
@@ -159,6 +186,259 @@ export const PairAccept = z.object({
   deviceId: z.string(),
 });
 
+// ---- Phase B: structured task cards (Paseo action cards) -------------------
+// Daemon → phone: a structured view of a task that's better rendered as a card
+// than as a flat log line. Replaces ad-hoc `📋 ${task}` text in many cases.
+export const TaskCard = z.object({
+  t: z.literal("task.card"),
+  seq: z.number().int(),
+  taskId: z.string(),
+  title: z.string(),
+  subtitle: z.string().default(""),
+  /** Lifecycle stage shown on the card header. */
+  status: z.enum(["draft", "pending", "running", "done", "error"]).default("running"),
+  /** Optional quick actions the phone can render as buttons. */
+  actions: z.array(z.object({
+    id: z.string(),
+    label: z.string(),
+    style: z.enum(["default", "primary", "danger"]).default("default"),
+  })).default([]),
+});
+
+/** Phone → daemon: user tapped a quick-action button on a task card. */
+export const TaskCardAction = z.object({
+  t: z.literal("task.card.action"),
+  seq: z.number().int(),
+  taskId: z.string(),
+  actionId: z.string(),
+});
+
+// ---- Phase C: memory (visible, editable user facts) ------------------------
+export const MemoryItem = z.object({
+  key: z.string(),
+  value: z.string(),
+  category: z.string().default("general"),
+  updatedAt: z.number().int(),
+});
+
+export const MemoryListReq = z.object({
+  t: z.literal("memory.list"),
+  seq: z.number().int(),
+});
+
+export const MemoryState = z.object({
+  t: z.literal("memory.state"),
+  seq: z.number().int(),
+  items: z.array(MemoryItem),
+});
+
+export const MemoryUpdate = z.object({
+  t: z.literal("memory.update"),
+  seq: z.number().int(),
+  key: z.string(),
+  value: z.string(),
+  category: z.string().default("general"),
+});
+
+export const MemoryDelete = z.object({
+  t: z.literal("memory.delete"),
+  seq: z.number().int(),
+  key: z.string(),
+});
+
+// ---- Phase D: settings -----------------------------------------------------
+// Settings is an opaque record<string, unknown> — the daemon knows the schema
+// per key (e.g. voiceReply: boolean, defaultRemindMin: number) and validates.
+export const SettingsGetReq = z.object({
+  t: z.literal("settings.get"),
+  seq: z.number().int(),
+});
+
+export const SettingsState = z.object({
+  t: z.literal("settings.state"),
+  seq: z.number().int(),
+  settings: z.record(z.string(), z.unknown()),
+});
+
+export const SettingsSet = z.object({
+  t: z.literal("settings.set"),
+  seq: z.number().int(),
+  key: z.string(),
+  value: z.unknown(),
+});
+
+// ---- Phase E: history (reuses TaskStore events table) ----------------------
+export const HistoryListReq = z.object({
+  t: z.literal("history.list"),
+  seq: z.number().int(),
+  limit: z.number().int().optional(),
+});
+
+export const HistoryEntry = z.object({
+  taskId: z.string(),
+  ev: z.string(),
+  data: z.string(),
+  ts: z.number().int(),
+});
+
+export const HistoryState = z.object({
+  t: z.literal("history.state"),
+  seq: z.number().int(),
+  entries: z.array(HistoryEntry),
+});
+
+// ---- Phase F: workspace config (mode/engine/tmuxTarget per workspace) -------
+// Each workspace can be configured independently:
+//   mode:   "spawn" = daemon spawns `claude -p` / `codex exec` child process
+//           "tmux"  = daemon injects via `tmux send-keys` into a live pane
+//   engine: "claude" or "codex"
+//   tmuxTarget: "session:window.pane" (mode==="tmux" only), e.g. "glm-…:1.1"
+//   sessionId:  spawn-mode sticky session id (managed by daemon, read-only on phone)
+export const WorkspaceMode = z.enum(["spawn", "tmux"]);
+export const WorkspaceEngine = z.enum(["claude", "codex"]);
+
+export const WorkspaceConfig = z.object({
+  mode: WorkspaceMode.default("spawn"),
+  engine: WorkspaceEngine.default("claude"),
+  tmuxTarget: z.string().optional(),
+  sessionId: z.string().optional(),
+});
+
+export const WorkspaceConfigUpdate = z.object({
+  t: z.literal("workspace.config.update"),
+  seq: z.number().int(),
+  workspace: z.string(),
+  config: WorkspaceConfig,
+});
+
+export const WorkspaceConfigState = z.object({
+  t: z.literal("workspace.config.state"),
+  seq: z.number().int(),
+  configs: z.record(z.string(), WorkspaceConfig),
+});
+
+// ---- Phase F: tmux pane discovery ------------------------------------------
+// Phone asks for panes that look like claude/codex/free-code; daemon scans
+// `tmux list-panes -a` and walks each pane's process tree.
+export const TmuxPaneInfo = z.object({
+  target: z.string(),             // "session:window.pane"
+  engine: z.enum(["claude", "codex", "unknown"]),
+  cwd: z.string(),
+  cmd: z.string(),                // pane_current_command
+  pid: z.number(),
+});
+
+export const TmuxPaneListReq = z.object({
+  t: z.literal("tmux.pane.list"),
+  seq: z.number().int(),
+});
+
+export const TmuxPaneState = z.object({
+  t: z.literal("tmux.pane.state"),
+  seq: z.number().int(),
+  panes: z.array(TmuxPaneInfo),
+});
+
+// ---- Phase F: engine availability ------------------------------------------
+// daemon reports which CLIs are installed + logged in
+export const EngineInfo = z.object({
+  engine: z.enum(["claude", "codex"]),
+  installed: z.boolean(),
+  path: z.string().optional(),
+  version: z.string().optional(),
+  loggedIn: z.boolean(),
+});
+
+export const EngineListReq = z.object({
+  t: z.literal("engine.list"),
+  seq: z.number().int(),
+});
+
+export const EngineState = z.object({
+  t: z.literal("engine.state"),
+  seq: z.number().int(),
+  engines: z.array(EngineInfo),
+});
+
+// ---- Phase G: agents (multi-session, resume-able) -------------------------
+// An Agent is a persistent work unit. Each agent has its own session-id
+// (Claude Code's --resume target or Codex's rollout thread id) and can be
+// paused / resumed / forked. Multiple agents can run concurrently.
+export const AgentInfo = z.object({
+  id: z.string(),
+  workspace: z.string(),
+  engine: z.enum(["claude", "codex"]),
+  session_id: z.string().optional(),
+  title: z.string(),
+  created_at: z.number().int(),
+  last_active: z.number().int(),
+  status: z.enum(["idle", "running", "done", "error"]),
+  cwd: z.string(),
+  message_count: z.number().int().default(0),
+});
+
+export const AgentCreate = z.object({
+  t: z.literal("agent.create"),
+  seq: z.number().int(),
+  workspace: z.string(),
+  engine: z.enum(["claude", "codex"]),
+  first_prompt: z.string(),
+});
+
+export const AgentListReq = z.object({
+  t: z.literal("agent.list"),
+  seq: z.number().int(),
+});
+
+export const AgentState = z.object({
+  t: z.literal("agent.state"),
+  seq: z.number().int(),
+  agents: z.array(AgentInfo),
+});
+
+/** Send a follow-up message to an existing agent (resume). */
+export const AgentMessage = z.object({
+  t: z.literal("agent.message"),
+  seq: z.number().int(),
+  agent_id: z.string(),
+  text: z.string(),
+});
+
+/** Stop a running agent (kill the spawn). */
+export const AgentStop = z.object({
+  t: z.literal("agent.stop"),
+  seq: z.number().int(),
+  agent_id: z.string(),
+});
+
+/** Request historical messages for an agent (for resume / replay). */
+export const AgentHistoryReq = z.object({
+  t: z.literal("agent.history"),
+  seq: z.number().int(),
+  agent_id: z.string(),
+  limit: z.number().int().optional(),
+});
+
+export const AgentHistoryEntry = z.object({
+  role: z.enum(["user", "assistant"]),
+  text: z.string(),
+  ts: z.number().int(),
+});
+
+export const AgentHistoryState = z.object({
+  t: z.literal("agent.history.state"),
+  seq: z.number().int(),
+  agent_id: z.string(),
+  entries: z.array(AgentHistoryEntry),
+});
+
+/** Delete an agent record (keeps the underlying session jsonl/rollout file). */
+export const AgentDelete = z.object({
+  t: z.literal("agent.delete"),
+  seq: z.number().int(),
+  agent_id: z.string(),
+});
+
 export const Payload = z.discriminatedUnion("t", [
   HelloPayload,
   CmdSubmit,
@@ -177,6 +457,34 @@ export const Payload = z.discriminatedUnion("t", [
   TtsStart,
   TtsChunk,
   TtsEnd,
+  WorkspaceListReq,
+  WorkspaceSwitch,
+  WorkspaceState,
+  TaskCard,
+  TaskCardAction,
+  MemoryListReq,
+  MemoryState,
+  MemoryUpdate,
+  MemoryDelete,
+  SettingsGetReq,
+  SettingsState,
+  SettingsSet,
+  HistoryListReq,
+  HistoryState,
+  WorkspaceConfigUpdate,
+  WorkspaceConfigState,
+  TmuxPaneListReq,
+  TmuxPaneState,
+  EngineListReq,
+  EngineState,
+  AgentCreate,
+  AgentListReq,
+  AgentState,
+  AgentMessage,
+  AgentStop,
+  AgentHistoryReq,
+  AgentHistoryState,
+  AgentDelete,
 ]);
 
 /** Payload types that bypass the reliable channel (own stream seq, kind:"voice"). */
@@ -207,3 +515,27 @@ export type AsrFinal = z.infer<typeof AsrFinal>;
 export type TtsStart = z.infer<typeof TtsStart>;
 export type TtsChunk = z.infer<typeof TtsChunk>;
 export type TtsEnd = z.infer<typeof TtsEnd>;
+export type WorkspaceListReq = z.infer<typeof WorkspaceListReq>;
+export type WorkspaceSwitch = z.infer<typeof WorkspaceSwitch>;
+export type WorkspaceState = z.infer<typeof WorkspaceState>;
+export type WorkspaceMode = z.infer<typeof WorkspaceMode>;
+export type WorkspaceEngine = z.infer<typeof WorkspaceEngine>;
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfig>;
+export type WorkspaceConfigUpdate = z.infer<typeof WorkspaceConfigUpdate>;
+export type WorkspaceConfigState = z.infer<typeof WorkspaceConfigState>;
+export type TmuxPaneInfo = z.infer<typeof TmuxPaneInfo>;
+export type TmuxPaneListReq = z.infer<typeof TmuxPaneListReq>;
+export type TmuxPaneState = z.infer<typeof TmuxPaneState>;
+export type EngineInfo = z.infer<typeof EngineInfo>;
+export type EngineListReq = z.infer<typeof EngineListReq>;
+export type EngineState = z.infer<typeof EngineState>;
+export type AgentInfo = z.infer<typeof AgentInfo>;
+export type AgentCreate = z.infer<typeof AgentCreate>;
+export type AgentListReq = z.infer<typeof AgentListReq>;
+export type AgentState = z.infer<typeof AgentState>;
+export type AgentMessage = z.infer<typeof AgentMessage>;
+export type AgentStop = z.infer<typeof AgentStop>;
+export type AgentHistoryReq = z.infer<typeof AgentHistoryReq>;
+export type AgentHistoryEntry = z.infer<typeof AgentHistoryEntry>;
+export type AgentHistoryState = z.infer<typeof AgentHistoryState>;
+export type AgentDelete = z.infer<typeof AgentDelete>;

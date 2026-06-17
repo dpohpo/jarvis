@@ -199,6 +199,78 @@ if (command === "pair") {
     console.log(`🛑 已发送停止指令 ${arg ? `(task ${arg})` : "(全部)"}`);
     setTimeout(() => process.exit(0), 1500);
   });
+} else if (command === "ws" || command === "workspace") {
+  // tsx src/index.ts ws [list|current|switch <name>]
+  // No arg or "current" → query state. "list" → query state (same reply).
+  // "switch <name>" → switch active workspace; empty name resets to root.
+  const s = load();
+  const outbox = new Outbox<Payload>(s.sentSeq ?? 0);
+  const inbox = new Inbox();
+  const sub = rest[0] ?? "current";
+  const wsArg = rest.slice(1).join(" ").trim();
+
+  const client = makeClient(s, (payload) => {
+    if ("seq" in payload && payload.t !== "hello") {
+      if (payload.seq <= (s.lastSeq ?? 0) || !inbox.accept(payload.seq)) return;
+      s.lastSeq = Math.max(s.lastSeq ?? 0, payload.seq);
+      save(s);
+      sendPayload({ t: "ack", upTo: s.lastSeq } as never);
+    }
+
+    switch (payload.t) {
+      case "workspace.state": {
+        const active = payload.active || "<root>";
+        console.log(`当前 workspace: ${active}`);
+        console.log(`所有 workspaces:`);
+        if (payload.workspaces.length === 0) {
+          console.log("  (空 — 还没有子目录)");
+        } else {
+          payload.workspaces.forEach((w) => {
+            const mark = w === payload.active ? " ← 当前" : "";
+            console.log(`  - ${w}${mark}`);
+          });
+        }
+        client.stop();
+        process.exit(0);
+        break;
+      }
+      default:
+        break;
+    }
+  });
+
+  function sendPayload(p: Payload & { seq: number }): void {
+    p.seq = outbox.add(p);
+    s.sentSeq = p.seq;
+    save(s);
+    const env = sealPayload(p, {
+      room: s.room,
+      from: s.deviceId,
+      to: s.daemonDeviceId,
+      peer: { theirBoxPublic: fromB64(s.daemonBoxPub), myBoxPrivate: fromB64(s.boxPriv) },
+    });
+    client.send(env);
+  }
+
+  client.start();
+  awaitUp(client).then(() => {
+    sendPayload({
+      t: "hello",
+      seq: 0,
+      resumeFrom: s.lastSeq ?? 0,
+      deviceName: "Phone Simulator",
+    } as never);
+    if (sub === "switch") {
+      console.log(`📤 切换 workspace → '${wsArg || "<root>"}'`);
+      sendPayload({ t: "workspace.switch", seq: 0, name: wsArg } as never);
+    } else {
+      sendPayload({ t: "workspace.list", seq: 0 } as never);
+    }
+  });
+  setTimeout(() => {
+    console.error("workspace 命令超时");
+    process.exit(1);
+  }, 15_000);
 } else if (command === "cmd" || command === "cmd-approve" || command === "tasks") {
   const s = load();
   const outbox = new Outbox<Payload>(s.sentSeq ?? 0);
@@ -275,7 +347,7 @@ if (command === "pair") {
     }
   });
 } else {
-  console.log("usage: pair '<json>' | cmd <text> | cmd-approve <text> | tasks");
+  console.log("usage: pair '<json>' | cmd <text> | cmd-approve <text> | tasks | ws [list|current|switch <name>] | voice <wav> | stop [taskId]");
   process.exit(1);
 }
 

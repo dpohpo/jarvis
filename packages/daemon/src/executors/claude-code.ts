@@ -55,9 +55,37 @@ export function runClaudeCode(opts: RunOpts): RunningTask {
   ];
   if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
 
+  // Claude Code talks to the same GLM endpoint as the brain router (via the
+  // Anthropic-compatible facade on open.bigmodel.cn). When the daemon is
+  // launched from a shell that didn't `export ANTHROPIC_*`, the spawned
+  // `claude -p` child inherits no credentials and the API replies 401
+  // ("令牌已过期或验证不正确"). Fall back to the Zhipu key that the brain
+  // router already uses (ZHIPU_API_KEY / JARVIS_ZHIPU_KEY) and to the verified
+  // bigmodel facade URL when the operator hasn't set them explicitly.
+  const anthropicApiKey =
+    process.env.ANTHROPIC_API_KEY ??
+    process.env.ANTHROPIC_AUTH_TOKEN ??
+    process.env.ZHIPU_API_KEY ??
+    process.env.JARVIS_ZHIPU_KEY;
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    CLAUDE_CODE_ENTRYPOINT: "jarvis-daemon",
+  };
+  if (anthropicApiKey) {
+    childEnv.ANTHROPIC_API_KEY = anthropicApiKey;
+    // Some Claude Code builds prefer AUTH_TOKEN over API_KEY; set both so the
+    // child can't fall through to "no credentials" again.
+    if (!childEnv.ANTHROPIC_AUTH_TOKEN) {
+      childEnv.ANTHROPIC_AUTH_TOKEN = anthropicApiKey;
+    }
+  }
+  if (!childEnv.ANTHROPIC_BASE_URL) {
+    childEnv.ANTHROPIC_BASE_URL = "https://open.bigmodel.cn/api/anthropic";
+  }
+
   const child = spawn(bin, args, {
     cwd: opts.workdir,
-    env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "jarvis-daemon" },
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
     // own process group so we can kill the whole tree (claude + its Bash/tool
     // children); killing just the leader leaves shell subprocesses orphaned.
