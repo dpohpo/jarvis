@@ -65,37 +65,39 @@ import {
 } from "./src/wakeword";
 
 // ============================================================================
-// §1  Theme tokens — Paseo Dark (teal-green tint)
+// §1  Theme tokens — Happy Material 3 Dark (purple-tint)
 // ============================================================================
-// 5-layer surface system, semantic colors, typography/spacing/radius/shadow.
-// Matches Paseo's real darkTheme (paseoDarkColors in theme.ts).
+// Ported from slopus/happy theme.dark.json (source color #18171C).
+// Field names kept identical to the previous Paseo Dark palette so every
+// style reference (C.accent, C.surface0, …) continues to work — only the
+// color values change. This is the lightest-touch way to "look like happy".
 const C = {
-  // Surfaces (layered: surface0=canvas, surface1=hover, surface2=card/bubble,
-  // surface3=elevated, surface4=highest)
-  surface0: "#181B1A",
-  surface1: "#1E2120",
-  surface2: "#272A29",
-  surface3: "#434645",
-  surface4: "#595B5B",
-  surfaceSidebar: "#141716",
-  surfaceSidebarHover: "#1C1F1E",
-  // Text
-  fg: "#FAFAFA",
-  fgMuted: "#A1A5A4",
-  fgSubtle: "#717574",
-  // Brand
-  accent: "#20744A",
-  accentBright: "#7CCBA0",
-  accentDim: "#193B27",
-  accentForeground: "#FFFFFF",
+  // 5-layer surface system (jarvis naming → happy-derived values)
+  // surface0 = happy background, surface4 = happy surfaceVariant
+  surface0: "#1C1B1F",         // happy background
+  surface1: "#221F26",         // hover (between bg and card)
+  surface2: "#2B2830",         // card / bubble
+  surface3: "#36333C",         // elevated
+  surface4: "#48454F",         // happy surfaceVariant (highest)
+  surfaceSidebar: "#161518",   // sidebar darker than canvas
+  surfaceSidebarHover: "#1C1B1F",
+  // Text — happy onBackground / onSurfaceVariant / outline
+  fg: "#E5E1E6",               // happy onBackground
+  fgMuted: "#C9C5D0",          // happy onSurfaceVariant
+  fgSubtle: "#928F99",         // happy outline (used for tertiary text)
+  // Brand — happy primary (purple), replaces jarvis teal-green
+  accent: "#C8BFFF",           // happy primary
+  accentBright: "#E5DEFF",     // happy onPrimaryContainer
+  accentDim: "#463A8D",        // happy primaryContainer
+  accentForeground: "#2F2176", // happy onPrimary
   // Semantic
-  destructive: "#C64F43",
-  destructiveDim: "#3A1F1C",
-  warn: "#D97706",
-  warnDim: "#3A2A12",
-  // Borders / dividers
-  border: "#252B2A",
-  borderAccent: "#2F3534",
+  destructive: "#FFB4AB",      // happy error
+  destructiveDim: "#93000A",   // happy errorContainer
+  warn: "#ECB8CE",             // happy tertiary
+  warnDim: "#613B4D",          // happy tertiaryContainer
+  // Borders / dividers — happy outline / outlineVariant
+  border: "#48454F",           // happy outlineVariant
+  borderAccent: "#928F99",     // happy outline
   // Backdrops
   backdropStrong: "rgba(0, 0, 0, 0.70)",
   backdropSoft: "rgba(0, 0, 0, 0.50)",
