@@ -15,7 +15,12 @@ import { mkdirSync, existsSync } from "node:fs";
 export interface AgentRecord {
   id: string;
   workspace: string;
+  /** Legacy engine field (use provider instead). Kept for compatibility. */
   engine: "claude" | "codex";
+  /** Provider ID (claude, codex, copilot, gemini). Defaults to "claude". */
+  provider: string;
+  /** Optional model override (e.g. "claude-opus-4-6", "gpt-5"). */
+  model: string | null;
   session_id: string | null;
   title: string;
   created_at: number;
@@ -34,11 +39,15 @@ function getDb(): Database.Database {
   mkdirSync(dirname(DB_PATH), { recursive: true });
   db = new Database(DB_PATH);
   db.pragma("journal_mode = WAL");
+
+  // Create table with new schema
   db.exec(`
     CREATE TABLE IF NOT EXISTS agents (
       id TEXT PRIMARY KEY,
       workspace TEXT NOT NULL,
       engine TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'claude',
+      model TEXT,
       session_id TEXT,
       title TEXT NOT NULL,
       created_at INTEGER NOT NULL,
@@ -50,6 +59,20 @@ function getDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_agents_last_active ON agents(last_active DESC);
     CREATE INDEX IF NOT EXISTS idx_agents_workspace ON agents(workspace);
   `);
+
+  // Migration: add provider/model columns if they don't exist (legacy DB)
+  try {
+    const row = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agents'").get() as { sql: string } | undefined;
+    if (row && !row.sql.includes("provider TEXT")) {
+      db.exec("ALTER TABLE agents ADD COLUMN provider TEXT NOT NULL DEFAULT 'claude'");
+    }
+    if (row && !row.sql.includes("model TEXT")) {
+      db.exec("ALTER TABLE agents ADD COLUMN model TEXT");
+    }
+  } catch (e) {
+    // Column may already exist, ignore error
+  }
+
   return db;
 }
 
@@ -60,15 +83,23 @@ export function createAgent(input: {
    *  agent.state push round-trip — same pattern as CmdSubmit.cmdId. */
   id?: string;
   workspace: string;
-  engine: "claude" | "codex";
+  /** Legacy engine field (use provider instead). Kept for compatibility. */
+  engine?: "claude" | "codex";
+  /** Provider ID (claude, codex, copilot, gemini). Defaults to "claude". */
+  provider?: string;
+  /** Optional model override (e.g. "claude-opus-4-6", "gpt-5"). */
+  model?: string;
   cwd: string;
   title: string;
 }): AgentRecord {
   const now = Date.now();
+  const provider = input.provider ?? input.engine ?? "claude";
   const agent: AgentRecord = {
     id: input.id ?? `agent-${ulid().toLowerCase()}`,
     workspace: input.workspace,
-    engine: input.engine,
+    engine: input.engine ?? (provider as "claude" | "codex"),
+    provider,
+    model: input.model ?? null,
     session_id: null,
     title: input.title,
     created_at: now,
@@ -79,12 +110,13 @@ export function createAgent(input: {
   };
   getDb()
     .prepare(
-      `INSERT INTO agents (id, workspace, engine, session_id, title, created_at, last_active, status, cwd, message_count)
-       VALUES (@id, @workspace, @engine, @session_id, @title, @created_at, @last_active, @status, @cwd, @message_count)`,
+      `INSERT INTO agents (id, workspace, engine, provider, model, session_id, title, created_at, last_active, status, cwd, message_count)
+       VALUES (@id, @workspace, @engine, @provider, @model, @session_id, @title, @created_at, @last_active, @status, @cwd, @message_count)`,
     )
     .run({
       ...agent,
       session_id: agent.session_id ?? null,
+      model: agent.model ?? null,
     });
   return agent;
 }
@@ -99,17 +131,19 @@ export function getAgent(id: string): AgentRecord | null {
   return (getDb().prepare(`SELECT * FROM agents WHERE id = ?`).get(id) as AgentRecord | undefined) ?? null;
 }
 
-export function updateAgent(id: string, patch: Partial<AgentRecord>): AgentRecord | null {
+export function updateAgent(id: string, patch: Partial<Omit<AgentRecord, "id" | "workspace" | "created_at" | "cwd">>): AgentRecord | null {
   const current = getAgent(id);
   if (!current) return null;
   const next = { ...current, ...patch, last_active: Date.now() };
   getDb()
     .prepare(
-      `UPDATE agents SET session_id=@session_id, title=@title, last_active=@last_active,
+      `UPDATE agents SET provider=@provider, model=@model, session_id=@session_id, title=@title, last_active=@last_active,
          status=@status, message_count=@message_count WHERE id=@id`,
     )
     .run({
       id: next.id,
+      provider: next.provider,
+      model: next.model ?? null,
       session_id: next.session_id ?? null,
       title: next.title,
       last_active: next.last_active,

@@ -76,12 +76,6 @@ import {
   updateMemory,
 } from "./brain/storage.js";
 import { existsSync } from "node:fs";
-import { registerProvider, listProviders } from "./executors/provider-registry.js";
-import { claudeProvider } from "./executors/providers/claude.js";
-import { codexProvider } from "./executors/providers/codex.js";
-import { copilotProvider } from "./executors/providers/copilot.js";
-import { geminiProvider } from "./executors/providers/gemini.js";
-import * as hostsStore from "./hosts/store.js";
 
 // load ~/.jarvis/env (KEY=value lines) before reading any config
 try {
@@ -734,19 +728,6 @@ function handlePayload(from: string, payload: Payload): void {
         seq: 0,
         agents: agentManager_listForPush(),
       });
-      // Push provider availability so phone can show provider/model pickers
-      sendTo(from, {
-        t: "provider.state",
-        seq: 0,
-        providers: listProviders().map((p) => ({
-          id: p.id,
-          name: p.name,
-          available: p.isAvailable(),
-          models: p.listModels(),
-        })),
-      });
-      // Push known hosts so phone can switch between multiple Macs
-      sendTo(from, { t: "host.state", seq: 0, hosts: hostsStore.listHosts() });
       break;
     }
     case "ack":
@@ -886,7 +867,6 @@ function handlePayload(from: string, payload: Payload): void {
         id: payload.agent_id,         // client-supplied id (phone ulid) or undefined
         workspace: wsName,
         engine: payload.engine,
-        provider: payload.engine,     // use engine as provider (for compatibility)
         cwd,
         title,
       });
@@ -955,43 +935,6 @@ function handlePayload(from: string, payload: Payload): void {
       // brain re-interprets them. Later we can have structured dispatch.
       log(`task.card.action: taskId=${payload.taskId} action=${payload.actionId}`);
       break;
-    // ---- provider abstraction (Part 1) ----
-    case "provider.list": {
-      sendTo(from, {
-        t: "provider.state",
-        seq: 0,
-        providers: listProviders().map((p) => ({
-          id: p.id,
-          name: p.name,
-          available: p.isAvailable(),
-          models: p.listModels(),
-        })),
-      });
-      break;
-    }
-    // ---- multi-host (Part 2) ----
-    case "host.register": {
-      hostsStore.registerHost({
-        id: payload.host.id,
-        name: payload.host.name,
-        hostname: payload.host.hostname,
-        status: payload.host.status,
-        lastSeen: payload.host.lastSeen,
-      });
-      log(`host.register: ${payload.host.name} (${payload.host.hostname})`);
-      broadcast(() => ({ t: "host.state", seq: 0, hosts: hostsStore.listHosts() }));
-      break;
-    }
-    case "host.list": {
-      sendTo(from, { t: "host.state", seq: 0, hosts: hostsStore.listHosts() });
-      break;
-    }
-    case "host.disconnect": {
-      hostsStore.removeHost(payload.hostId);
-      log(`host.disconnect: ${payload.hostId}`);
-      broadcast(() => ({ t: "host.state", seq: 0, hosts: hostsStore.listHosts() }));
-      break;
-    }
     default:
       log(`unhandled payload ${payload.t} from ${from}`);
   }
@@ -1041,18 +984,6 @@ const relay = new RelayClient({
   },
   onUp: () => log(`link up (room ${room.slice(0, 8)}…)`),
 });
-
-// ---- provider registration (Part 1: Provider abstraction) ---------------
-registerProvider(claudeProvider);
-registerProvider(codexProvider);
-registerProvider(copilotProvider);
-registerProvider(geminiProvider);
-log(`providers registered: ${listProviders().map((p) => p.id).join(", ")}`);
-
-// ---- hosts store init (Part 2: Multi-Host simplified) --------------------
-// Load hosts DB so phone can register multiple Mac hosts
-hostsStore.listHosts(); // trigger DB creation if not exists
-log(`hosts store initialized at ~/.jarvis/hosts.sqlite`);
 relay.start();
 
 // Reconcile agent state after daemon restart:

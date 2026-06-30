@@ -77,6 +77,7 @@ import {
 // surface layers. Field names kept stable so the ~800 lines of styles in §12
 // inherit the new palette automatically.
 import { DARK, SP as SP_TOK, RD, FS as FS_TOK, FW as FW_TOK, SH as SH_TOK } from "./src/theme";
+import { PaseoShell } from "./src/paseo-shell";
 
 const C = DARK;
 const SP = SP_TOK;
@@ -822,6 +823,75 @@ function Main() {
 
   // ---------- §6-§11 console screen ----------
   const pill = statusPill(linkUp, recording, busy, wakeOn);
+
+  // Paseo UI mode — wraps jarvis state in paseo-style shell.
+  // Toggle PASEO_MODE=false to fall back to legacy single-file UI.
+  const PASEO_MODE = true;
+  if (PASEO_MODE) {
+    return (
+      <>
+        <StatusBar style="light" />
+        <PaseoShell
+          lines={lines as any}
+          busy={busy}
+          workspaceActive={workspaceActive}
+          workspaceList={workspaceList}
+          onSwitchWorkspace={(name) => client.current?.switchWorkspace(name)}
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          onSelectAgent={(id) => {
+            setSelectedAgentId(id);
+            if (id) client.current?.requestAgentHistory(id, 50);
+          }}
+          onDeleteAgent={(id) => client.current?.deleteAgent(id)}
+          onRenameAgent={(agent, t) => client.current?.agentRename(agent.id, t)}
+          onStopAgent={(id) => client.current?.agentStop(id)}
+          input={input}
+          onChangeInput={setInput}
+          onSubmit={() => submit()}
+          recording={recording}
+          onToggleRecording={() => {
+            if (recording) void finishRecording();
+            else void beginRecording(false);
+          }}
+          hostName="Poincare Mac"
+          linkUp={linkUp}
+          onOpenSettings={() => setSheet("settings")}
+          renderBubble={(b) => <BubbleView bubble={b as any} />}
+        />
+        {/* Permission modal stays mounted so the paseo shell can trigger it
+            via setPerm without losing the screen. */}
+        <Modal visible={perm !== null} transparent animationType="fade" onRequestClose={() => setPerm(null)}>
+          <View style={styles.backdropCenter}>
+            <View style={styles.permCard}>
+              <Text style={styles.permTitle}>Tier {perm?.tier} 操作审批</Text>
+              <Text style={styles.permSummary}>{perm?.summary}</Text>
+              <View style={styles.permRow}>
+                <Pressable
+                  style={styles.permBtnDeny}
+                  onPress={() => {
+                    if (perm) client.current?.respondPermission(perm.reqId, false);
+                    setPerm(null);
+                  }}
+                >
+                  <Text style={styles.permBtnDenyText}>拒绝</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.permBtnApprove}
+                  onPress={() => {
+                    if (perm) client.current?.respondPermission(perm.reqId, true);
+                    setPerm(null);
+                  }}
+                >
+                  <Text style={styles.permBtnApproveText}>批准</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      </>
+    );
+  }
 
   return (
     <KeyboardAvoidingView style={styles.root} behavior="padding">

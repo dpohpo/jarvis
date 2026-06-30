@@ -198,6 +198,13 @@ export const THEMES: Record<ThemeName, ThemeTokens> = {
 
 export const DEFAULT_THEME: ThemeName = "dark";
 
+/**
+ * C — Current color tokens (default DARK theme alias).
+ * Used in StyleSheet.create for inline color values.
+ * Switch themes by updating this alias or using useTheme() hook.
+ */
+export const C = DARK;
+
 /** Spacing scale (px). VERIFIED from paseo theme.ts spacing. */
 export const SP = {
   0: 0,

@@ -302,6 +302,10 @@ export const WorkspaceConfig = z.object({
   engine: WorkspaceEngine.default("claude"),
   tmuxTarget: z.string().optional(),
   sessionId: z.string().optional(),
+  /** Provider override (claude, codex, copilot, gemini). Defaults to engine. */
+  defaultProvider: z.string().optional(),
+  /** Model override (e.g. "claude-opus-4-6", "gpt-5"). */
+  defaultModel: z.string().optional(),
 });
 
 export const WorkspaceConfigUpdate = z.object({
@@ -358,6 +362,61 @@ export const EngineState = z.object({
   t: z.literal("engine.state"),
   seq: z.number().int(),
   engines: z.array(EngineInfo),
+});
+
+// ---- Phase F2: provider abstraction (multi-provider support) -------------
+// Providers extend the engine concept to support Claude Code / Codex / Copilot / Gemini.
+// Phone can query available providers and their models, then select one when creating agents.
+export const ProviderListReq = z.object({
+  t: z.literal("provider.list"),
+  seq: z.number().int(),
+});
+
+export const ProviderInfo = z.object({
+  id: z.string(),
+  name: z.string(),
+  available: z.boolean(),
+  models: z.array(z.string()),
+});
+
+export const ProviderListState = z.object({
+  t: z.literal("provider.state"),
+  seq: z.number().int(),
+  providers: z.array(ProviderInfo),
+});
+
+// ---- Phase F3: multi-host (simplified) ------------------------------------
+// Phone can register multiple Mac hosts and switch between them.
+// This is a simplified version without full mesh sync.
+export const HostInfo = z.object({
+  id: z.string(),
+  name: z.string(),
+  hostname: z.string(),
+  status: z.enum(["online", "offline"]),
+  lastSeen: z.number().int(),
+});
+
+export const HostRegister = z.object({
+  t: z.literal("host.register"),
+  seq: z.number().int(),
+  host: HostInfo,
+});
+
+export const HostListReq = z.object({
+  t: z.literal("host.list"),
+  seq: z.number().int(),
+});
+
+export const HostListState = z.object({
+  t: z.literal("host.state"),
+  seq: z.number().int(),
+  hosts: z.array(HostInfo),
+});
+
+export const HostDisconnect = z.object({
+  t: z.literal("host.disconnect"),
+  seq: z.number().int(),
+  hostId: z.string(),
 });
 
 // ---- Phase G: agents (multi-session, resume-able) -------------------------
@@ -493,6 +552,12 @@ export const Payload = z.discriminatedUnion("t", [
   TmuxPaneState,
   EngineListReq,
   EngineState,
+  ProviderListReq,
+  ProviderListState,
+  HostRegister,
+  HostListReq,
+  HostListState,
+  HostDisconnect,
   AgentCreate,
   AgentListReq,
   AgentState,
@@ -546,6 +611,14 @@ export type TmuxPaneState = z.infer<typeof TmuxPaneState>;
 export type EngineInfo = z.infer<typeof EngineInfo>;
 export type EngineListReq = z.infer<typeof EngineListReq>;
 export type EngineState = z.infer<typeof EngineState>;
+export type ProviderListReq = z.infer<typeof ProviderListReq>;
+export type ProviderInfo = z.infer<typeof ProviderInfo>;
+export type ProviderListState = z.infer<typeof ProviderListState>;
+export type HostInfo = z.infer<typeof HostInfo>;
+export type HostRegister = z.infer<typeof HostRegister>;
+export type HostListReq = z.infer<typeof HostListReq>;
+export type HostListState = z.infer<typeof HostListState>;
+export type HostDisconnect = z.infer<typeof HostDisconnect>;
 export type AgentInfo = z.infer<typeof AgentInfo>;
 export type AgentCreate = z.infer<typeof AgentCreate>;
 export type AgentListReq = z.infer<typeof AgentListReq>;
