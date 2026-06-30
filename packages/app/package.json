@@ -18,6 +18,7 @@
     "react-native-keyboard-controller": "1.21.6",
     "react-native-libsodium": "^1.7.0",
     "sherpa-wake": "file:./modules/sherpa-wake",
+    "sherpa-vad": "file:./modules/sherpa-vad",
     "zod": "^3.24.0"
   },
   "devDependencies": {

@@ -254,15 +254,33 @@ export class JarvisClient {
   }
 
   /** Create a new agent. Daemon spawns the executor (tmux by default) and
-   *  pushes a fresh agent.state to all paired devices. */
-  createAgent(workspace: string, engine: "claude" | "codex", firstPrompt: string): void {
+   *  pushes a fresh agent.state to all paired devices.
+   *
+   *  Pass `opts.agentId` to use a client-generated id (recommended): the phone
+   *  can setSelectedAgentId(id) immediately without waiting for the daemon's
+   *  agent.state push to learn the new id. Same pattern as CmdSubmit.cmdId.
+   *  Pass `opts.title` to override the default (first_prompt.slice(0, 60)). */
+  createAgent(
+    workspace: string,
+    engine: "claude" | "codex",
+    firstPrompt: string,
+    opts?: { agentId?: string; title?: string },
+  ): void {
     this.send({
       t: "agent.create",
       seq: 0,
       workspace,
       engine,
       first_prompt: firstPrompt,
+      agent_id: opts?.agentId,
+      title: opts?.title,
     } as never);
+  }
+
+  /** Rename an existing agent. Daemon broadcasts a fresh agent.state after
+   *  the update so every paired device sees the new title. */
+  agentRename(agentId: string, title: string): void {
+    this.send({ t: "agent.rename", seq: 0, agent_id: agentId, title } as never);
   }
 
   /** Send a follow-up message to an existing agent (resume). Daemon will

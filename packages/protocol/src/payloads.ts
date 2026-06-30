@@ -383,6 +383,13 @@ export const AgentCreate = z.object({
   workspace: z.string(),
   engine: z.enum(["claude", "codex"]),
   first_prompt: z.string(),
+  /** Optional client-generated id (e.g. `agent-${ulid()}`). When set, the
+   *  daemon uses it as the primary key instead of generating its own. Lets
+   *  the phone setSelectedAgentId(id) immediately without waiting for the
+   *  agent.state push round-trip. Same pattern as CmdSubmit.cmdId. */
+  agent_id: z.string().optional(),
+  /** Optional title (defaults to first_prompt.slice(0, 60) in daemon). */
+  title: z.string().optional(),
 });
 
 export const AgentListReq = z.object({
@@ -439,6 +446,15 @@ export const AgentDelete = z.object({
   agent_id: z.string(),
 });
 
+/** Rename an existing agent (updates title only). Daemon broadcasts a fresh
+ *  agent.state to all paired devices after the update. */
+export const AgentRename = z.object({
+  t: z.literal("agent.rename"),
+  seq: z.number().int(),
+  agent_id: z.string(),
+  title: z.string(),
+});
+
 export const Payload = z.discriminatedUnion("t", [
   HelloPayload,
   CmdSubmit,
@@ -485,6 +501,7 @@ export const Payload = z.discriminatedUnion("t", [
   AgentHistoryReq,
   AgentHistoryState,
   AgentDelete,
+  AgentRename,
 ]);
 
 /** Payload types that bypass the reliable channel (own stream seq, kind:"voice"). */
@@ -539,3 +556,4 @@ export type AgentHistoryReq = z.infer<typeof AgentHistoryReq>;
 export type AgentHistoryEntry = z.infer<typeof AgentHistoryEntry>;
 export type AgentHistoryState = z.infer<typeof AgentHistoryState>;
 export type AgentDelete = z.infer<typeof AgentDelete>;
+export type AgentRename = z.infer<typeof AgentRename>;

@@ -53,6 +53,7 @@ import {
   createAgent as agentsCreate,
   listAgents as agentsList,
   getAgent as agentsGet,
+  updateAgent as agentsUpdate,
   deleteAgent as agentsDelete,
   agentSendKey,
 } from "./agents/manager.js";
@@ -860,8 +861,10 @@ function handlePayload(from: string, payload: Payload): void {
     case "agent.create": {
       const wsName = payload.workspace;
       const cwd = resolveWsCwd(wsName);
-      const title = payload.first_prompt.trim().slice(0, 60) || "新会话";
+      const title =
+        (payload.title?.trim() || payload.first_prompt.trim()).slice(0, 60) || "新会话";
       const agent = agentsCreate({
+        id: payload.agent_id,         // client-supplied id (phone ulid) or undefined
         workspace: wsName,
         engine: payload.engine,
         cwd,
@@ -872,6 +875,17 @@ function handlePayload(from: string, payload: Payload): void {
       const r = agentManager_spawn(agent.id, payload.first_prompt, from);
       if (!r.ok) log(`agent.create spawn failed: ${r.reason}`);
       // Push fresh agent list to all devices.
+      broadcast(() => ({ t: "agent.state", seq: 0, agents: agentManager_listForPush() }));
+      break;
+    }
+    case "agent.rename": {
+      const newTitle = payload.title.trim().slice(0, 120);
+      if (!newTitle) {
+        log(`agent.rename: empty title from ${payload.agent_id}, ignored`);
+        break;
+      }
+      const updated = agentsUpdate(payload.agent_id, { title: newTitle });
+      log(`agent.rename: ${payload.agent_id} → "${updated?.title ?? "(not found)"}"`);
       broadcast(() => ({ t: "agent.state", seq: 0, agents: agentManager_listForPush() }));
       break;
     }

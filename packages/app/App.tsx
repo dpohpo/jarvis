@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -413,6 +414,9 @@ function Main() {
   // null  → "自由模式"（submit 走 cmd.submit，不绑 agent）
   // string→ 选中的 agent.id，submit 走 agent.message（resume）
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  // Agent currently being renamed (Android only — iOS uses Alert.prompt).
+  const [renameTarget, setRenameTarget] = useState<AgentInfo | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const [camPerm, requestCamPerm] = useCameraPermissions();
   const client = useRef<JarvisClient | null>(null);
@@ -547,15 +551,23 @@ function Main() {
     const text = input.trim();
     if (!text || !client.current) return;
     pushLine("user", text);
-    // If an agent is selected, route to that conversation (resume). Otherwise
-    // fire a fresh cmd.submit (legacy free-chat path).
     if (selectedAgentId) {
+      // Resume the currently-selected conversation.
       client.current.agentMessage(selectedAgentId, text);
     } else {
-      client.current.submitCommand(text);
+      // GPT-style: a submit with no conversation selected starts a NEW agent.
+      // Generate the id locally so we can setSelectedAgentId immediately
+      // (no waiting for the daemon's agent.state push round-trip).
+      const newId = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const title = text.slice(0, 40);
+      client.current.createAgent(workspaceActive ?? "", "claude", text, {
+        agentId: newId,
+        title,
+      });
+      setSelectedAgentId(newId);
     }
     setInput("");
-  }, [input, pushLine, selectedAgentId]);
+  }, [input, pushLine, selectedAgentId, workspaceActive]);
 
   // ---- voice recording helpers (logic-equivalent) ----
   const beginRecording = useCallback(async (vad: boolean) => {
@@ -852,6 +864,20 @@ function Main() {
             {pill.label}
           </Text>
         </View>
+        {/* "✚ New conversation" — clears selectedAgentId + chat surface so the
+            next submit creates a fresh agent (GPT-style). Always visible so
+            the user can fork a new chat without diving into the drawer. */}
+        <Pressable
+          style={[styles.headerWsBtn, { paddingHorizontal: 10, opacity: selectedAgentId ? 1 : 0.4 }]}
+          onPress={() => {
+            if (!selectedAgentId) return;
+            setSelectedAgentId(null);
+            setLines([]);
+            pushLine("system", "✚ 新对话已就绪 — 下条消息会创建新会话");
+          }}
+        >
+          <Text style={styles.headerWsIcon}>✚</Text>
+        </Pressable>
         <Pressable
           style={styles.headerWsBtn}
           onPress={() => {
@@ -890,7 +916,7 @@ function Main() {
               <PulseDot color={C.destructive} />
               <Text style={[styles.bannerText, { color: C.destructive, flex: 1 }]}>
                 {recMode.current === "auto"
-                  ? "聆听中 — 说完停顿即发送（按麦克风立即结束）"
+                  ? "聆听中 — 说完停顿约 1 秒自动发送（按麦克风立即结束）"
                   : recMode.current === "tap"
                     ? "录音中 — 再按一下麦克风结束"
                     : "录音中 — 松开发送"}
@@ -1075,6 +1101,25 @@ function Main() {
           if (selectedAgentId === id) setSelectedAgentId(null);
         }}
         onStopAgent={(id) => client.current?.agentStop(id)}
+        onRenameAgent={(agent) => {
+          // Long-press → rename. Alert.prompt is iOS-only; on Android we fall
+          // back to window.prompt via a TextInput Modal (setRenameTarget).
+          if (Platform.OS === "ios") {
+            Alert.prompt(
+              "重命名会话",
+              `改 "${agent.title || "(无标题)"}" 的标题`,
+              (newTitle) => {
+                const t = newTitle?.trim();
+                if (t) client.current?.agentRename(agent.id, t);
+              },
+              undefined,
+              agent.title || "",
+            );
+          } else {
+            setRenameValue(agent.title || "");
+            setRenameTarget(agent);
+          }
+        }}
       />
 
       {/* §11 PermissionModal */}
@@ -1105,6 +1150,61 @@ function Main() {
                 }}
               >
                 <Text style={styles.permBtnApproveText}>批准</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Rename agent modal — Android fallback for iOS Alert.prompt. */}
+      <Modal
+        visible={renameTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setRenameTarget(null)}
+      >
+        <View style={styles.backdropCenter}>
+          <View style={styles.permCard}>
+            <View style={styles.permHeader}>
+              <Text style={styles.permIcon}>✏️</Text>
+              <Text style={styles.permTitle}>重命名会话</Text>
+            </View>
+            <TextInput
+              style={{
+                backgroundColor: "#0B0F14",
+                color: C.fg,
+                borderRadius: 8,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                marginVertical: 12,
+                fontSize: 15,
+                borderWidth: 1,
+                borderColor: C.border,
+              }}
+              value={renameValue}
+              onChangeText={setRenameValue}
+              placeholder={renameTarget?.title || "新标题"}
+              placeholderTextColor={C.fgSubtle}
+              autoFocus
+              selectTextOnFocus
+            />
+            <View style={styles.permRow}>
+              <Pressable
+                style={styles.permBtnDeny}
+                onPress={() => setRenameTarget(null)}
+              >
+                <Text style={styles.permBtnDenyText}>取消</Text>
+              </Pressable>
+              <Pressable
+                style={styles.permBtnApprove}
+                onPress={() => {
+                  const t = renameValue.trim();
+                  if (t && renameTarget) client.current?.agentRename(renameTarget.id, t);
+                  setRenameTarget(null);
+                  setRenameValue("");
+                }}
+              >
+                <Text style={styles.permBtnApproveText}>保存</Text>
               </Pressable>
             </View>
           </View>
@@ -1550,6 +1650,7 @@ function BottomSheet(props: {
   onSelectAgent: (id: string | null) => void;
   onDeleteAgent: (id: string) => void;
   onStopAgent: (id: string) => void;
+  onRenameAgent: (agent: AgentInfo) => void;
 }) {
   const { kind } = props;
   const titles: Record<Exclude<SheetKind, null>, string> = {
@@ -1587,6 +1688,7 @@ function BottomSheet(props: {
                 onSelect={props.onSelectAgent}
                 onDelete={props.onDeleteAgent}
                 onStop={props.onStopAgent}
+                onRename={props.onRenameAgent}
               />
             )}
           </ScrollView>
@@ -1605,10 +1707,12 @@ function AgentsBody({
   onSelect,
   onDelete,
   onStop,
+  onRename,
 }: {
   agents: AgentInfo[];
   selectedAgentId: string | null;
   onSelect: (id: string | null) => void;
+  onRename: (agent: AgentInfo) => void;
   onDelete: (id: string) => void;
   onStop: (id: string) => void;
 }) {
@@ -1667,7 +1771,10 @@ function AgentsBody({
             key={a.id}
             style={[styles.agentCard, isSelected && styles.agentCardActive]}
           >
-            <Pressable onPress={() => onSelect(a.id)}>
+            <Pressable
+              onPress={() => onSelect(a.id)}
+              onLongPress={() => onRename(a)}
+            >
               <View style={styles.agentHead}>
                 <Text style={styles.agentEngineBadge}>
                   {a.engine === "codex" ? "Cx" : "Cl"}

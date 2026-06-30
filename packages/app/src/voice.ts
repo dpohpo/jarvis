@@ -1,10 +1,15 @@
 /**
  * Phone-side voice I/O.
  *
- * Capture: @picovoice/react-native-voice-processor (Apache-2.0, standalone —
- * no Picovoice account; verified API: start(frameLength, sampleRate),
- * addFrameListener(frame: number[]), stop(), hasRecordAudioPermission()).
- * Frames are 16kHz mono int16; we batch ~10 frames (~320ms) per encrypted chunk.
+ * Capture paths:
+ *  - **VAD mode (preferred)**: SherpaVad Expo Module drives its own
+ *    AudioRecord + Silero VAD. Emits chunk / speechend / error events.
+ *    Accurate neural-network end-of-speech detection; no fixed time cap.
+ *  - **VAD fallback (RMS)**: if SherpaVad fails to init, we fall back to a
+ *    poor-man's RMS energy gate via @picovoice/react-native-voice-processor.
+ *    Time cap is removed here too, but accuracy is worse.
+ *  - **Hold/tap mode (no VAD)**: same Picovoice path, RMS gate disabled, the
+ *    caller decides when to stop.
  *
  * Playback: assemble TTS chunks → cache file → expo-audio player.
  */
@@ -12,15 +17,19 @@ import { VoiceProcessor } from "@picovoice/react-native-voice-processor";
 import { createAudioPlayer, setAudioModeAsync } from "expo-audio";
 import { File, Paths } from "expo-file-system";
 import { toB64, fromB64 } from "@jarvis/protocol";
+import SherpaVad from "sherpa-vad";
 
 const FRAME_LENGTH = 512; // 32ms at 16kHz
 const FRAMES_PER_CHUNK = 10;
 
-// Poor-man's VAD: RMS energy gate. Tuned for hand-held phone distance;
-// fails in loud environments (falls back to manual stop / max duration).
-const VAD_SILENCE_RMS = 300; // int16 RMS below this = silence
-const VAD_SILENCE_MS = 1400; // this much trailing silence ends the utterance
-const VAD_MAX_MS = 15_000; // hard cap per utterance
+// Poor-man's VAD (RMS fallback): only used when SherpaVad fails to init.
+// Tuned to be lenient — the goal is to never interrupt mid-utterance.
+const VAD_SILENCE_RMS = 200;     // int16 RMS below this = silence (was 300)
+const VAD_SILENCE_MS = 1800;     // trailing silence to end (was 1400)
+const VAD_GIVEUP_MS = 30_000;    // bail if nobody spoke (was 6_000; bumped
+                                 // because false starts are better than
+                                 // the daemon never getting a turn)
+// No hard utterance cap — user explicitly asked for unlimited duration.
 const FRAME_MS = 32;
 
 export interface CaptureOpts {
@@ -39,6 +48,76 @@ let silenceMs = 0;
 let totalMs = 0;
 let heardSpeech = false;
 
+// ---- SherpaVad (preferred VAD path) ----------------------------------------
+
+/** null = untested, true = ready, false = unavailable (use RMS fallback). */
+let sherpaReady: boolean | null = null;
+let usingSherpa = false;
+let chunkListener: { remove: () => void } | null = null;
+let endListener: { remove: () => void } | null = null;
+let errListener: { remove: () => void } | null = null;
+
+async function ensureSherpa(): Promise<boolean> {
+  if (sherpaReady !== null) return sherpaReady;
+  try {
+    sherpaReady = await SherpaVad.init({
+      threshold: 0.5,
+      minSilenceDuration: 1.0,    // user asked for "about 1 second"
+      minSpeechDuration: 0.1,
+      maxSpeechDuration: 3600,    // effectively no cap
+    });
+    if (!sherpaReady) console.warn("[voice] SherpaVad.init returned false");
+  } catch (e) {
+    console.warn("[voice] SherpaVad.init threw, falling back to RMS:", e);
+    sherpaReady = false;
+  }
+  return sherpaReady;
+}
+
+function detachSherpaListeners(): void {
+  chunkListener?.remove();
+  endListener?.remove();
+  errListener?.remove();
+  chunkListener = endListener = errListener = null;
+}
+
+async function startSherpa(o: CaptureOpts): Promise<boolean> {
+  chunkListener = SherpaVad.addListener("chunk", ({ b64 }) => {
+    if (capturing && opts) opts.onChunk(b64);
+  });
+  endListener = SherpaVad.addListener("speechend", () => {
+    if (capturing && opts) {
+      const cb = opts.onAutoEnd;
+      capturing = false;
+      detachSherpaListeners();
+      void SherpaVad.stop();
+      cb?.();
+    }
+  });
+  errListener = SherpaVad.addListener("error", ({ message }) => {
+    console.error("[voice] SherpaVad error:", message);
+    if (capturing && opts) {
+      // Treat fatal error as end-of-utterance so the UI doesn't hang.
+      const cb = opts.onAutoEnd;
+      capturing = false;
+      detachSherpaListeners();
+      cb?.();
+    }
+  });
+
+  const started = await SherpaVad.start();
+  if (!started) {
+    detachSherpaListeners();
+    return false;
+  }
+  opts = o;
+  capturing = true;
+  usingSherpa = true;
+  return true;
+}
+
+// ---- RMS helpers (only used when SherpaVad isn't available) ----------------
+
 function rms(frame: number[]): number {
   let sum = 0;
   for (const s of frame) sum += s * s;
@@ -54,7 +133,7 @@ function flushFrames(): void {
 }
 
 vp.addFrameListener((frame: number[]) => {
-  if (!capturing || !opts) return;
+  if (!capturing || !opts || usingSherpa) return;
   frameBuf.push(frame);
   if (frameBuf.length >= FRAMES_PER_CHUNK) flushFrames();
 
@@ -67,8 +146,8 @@ vp.addFrameListener((frame: number[]) => {
     silenceMs += FRAME_MS;
   }
   const utteranceDone = heardSpeech && silenceMs >= VAD_SILENCE_MS;
-  const gaveUp = !heardSpeech && totalMs >= 6_000; // nobody spoke
-  if (utteranceDone || gaveUp || totalMs >= VAD_MAX_MS) {
+  const gaveUp = !heardSpeech && totalMs >= VAD_GIVEUP_MS;
+  if (utteranceDone || gaveUp) {
     const cb = opts.onAutoEnd;
     capturing = false; // stop feeding before the async stop completes
     void vp.stop().then(() => {
@@ -80,12 +159,22 @@ vp.addFrameListener((frame: number[]) => {
 
 export async function startCapture(o: CaptureOpts): Promise<boolean> {
   if (capturing) return true;
+
+  // VAD mode: try neural-network end-pointing first.
+  if (o.vad && (await ensureSherpa())) {
+    const ok = await startSherpa(o);
+    if (ok) return true;
+    // fall through to RMS path
+  }
+
+  // RMS path (VAD fallback or hold/tap mode).
   if (!(await vp.hasRecordAudioPermission())) return false;
   frameBuf = [];
   opts = o;
   silenceMs = 0;
   totalMs = 0;
   heardSpeech = false;
+  usingSherpa = false;
   capturing = true;
   await vp.start(FRAME_LENGTH, 16000);
   return true;
@@ -94,6 +183,19 @@ export async function startCapture(o: CaptureOpts): Promise<boolean> {
 export async function stopCapture(): Promise<void> {
   if (!capturing) return;
   capturing = false;
+
+  if (usingSherpa) {
+    detachSherpaListeners();
+    try {
+      await SherpaVad.stop();
+    } catch (e) {
+      console.warn("[voice] SherpaVad.stop threw:", e);
+    }
+    usingSherpa = false;
+    opts = null;
+    return;
+  }
+
   await vp.stop();
   flushFrames();
   opts = null;

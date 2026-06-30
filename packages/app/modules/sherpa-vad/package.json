@@ -1,0 +1,14 @@
+{
+  "name": "sherpa-vad",
+  "version": "0.1.0",
+  "description": "Silero VAD via sherpa-onnx for Jarvis utterance-end detection",
+  "main": "index.ts",
+  "scripts": {
+    "build": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "expo-modules-core": "*"
+  },
+  "sideEffects": false
+}

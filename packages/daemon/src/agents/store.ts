@@ -54,6 +54,11 @@ function getDb(): Database.Database {
 }
 
 export function createAgent(input: {
+  /** Optional client-supplied id. When set, the daemon uses it as the primary
+   *  key instead of generating `agent-${ulid()}`. This lets the phone
+   *  setSelectedAgentId(id) immediately on submit without waiting for the
+   *  agent.state push round-trip — same pattern as CmdSubmit.cmdId. */
+  id?: string;
   workspace: string;
   engine: "claude" | "codex";
   cwd: string;
@@ -61,7 +66,7 @@ export function createAgent(input: {
 }): AgentRecord {
   const now = Date.now();
   const agent: AgentRecord = {
-    id: `agent-${ulid().toLowerCase()}`,
+    id: input.id ?? `agent-${ulid().toLowerCase()}`,
     workspace: input.workspace,
     engine: input.engine,
     session_id: null,

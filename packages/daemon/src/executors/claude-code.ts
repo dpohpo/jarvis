@@ -36,14 +36,51 @@ export function findClaudeBin(): string {
   throw new Error("claude binary not found; set JARVIS_CLAUDE_BIN");
 }
 
+/**
+ * Resolve how to invoke Claude Code.
+ *
+ * Returns `{ bin, preArgs }` so the caller does `spawn(bin, [...preArgs, ...userArgs])`.
+ *
+ * Why this exists: the homebrew/npm `@anthropic-ai/claude-code` package ships a
+ * standalone Mach-O binary at `bin/claude.exe` (no cli.js). On macOS Sequoia
+ * (15.x) this binary is **unsigned**, and the OS marks it with the
+ * `com.apple.provenance` xattr on every install/upgrade. Sequoia then SIGKILLs
+ * it on exec (exit 137, no stderr) — so `spawn("/opt/homebrew/bin/claude")`
+ * produces zero output and the task appears to hang on the phone.
+ *
+ * Workaround: prefer invoking via `node <cli.js>` when a cli.js exists anywhere
+ * on disk. The user's `~/.claude-cli-local` (populated by their zsh `_claude_exec`)
+ * is the canonical source; `JARVIS_CLAUDE_CLI_JS` lets operators override.
+ *
+ * Verified 2026-06-29: `node cli.js --version` → `2.1.89 (Claude Code)`,
+ * while `claude.exe --version` exits 137 with no output.
+ */
+export function findClaudeEntry(): { bin: string; preArgs: string[] } {
+  const cliJs =
+    process.env.JARVIS_CLAUDE_CLI_JS ??
+    `${process.env.HOME}/.claude-cli-local/node_modules/@anthropic-ai/claude-code/cli.js`;
+  if (existsSync(cliJs)) {
+    const nodeBin =
+      process.env.NODE_BIN ??
+      (existsSync("/opt/homebrew/bin/node") ? "/opt/homebrew/bin/node" : "/usr/local/bin/node");
+    if (existsSync(nodeBin)) {
+      return { bin: nodeBin, preArgs: [cliJs] };
+    }
+  }
+  // Fall back to the standalone binary path (works on Intel Macs, older macOS,
+  // or when the binary is properly signed / quarantined-xattr removed).
+  return { bin: findClaudeBin(), preArgs: [] };
+}
+
 export interface RunningTask {
   kill: () => void;
   done: Promise<{ ok: boolean; result: string }>;
 }
 
 export function runClaudeCode(opts: RunOpts): RunningTask {
-  const bin = findClaudeBin();
+  const { bin, preArgs } = findClaudeEntry();
   const args = [
+    ...preArgs,
     "-p",
     opts.prompt,
     "--output-format",
@@ -133,8 +170,40 @@ export function runClaudeCode(opts: RunOpts): RunningTask {
         if (block.type === "text" && typeof block.text === "string" && block.text) {
           opts.onEvent({ ev: "output", data: block.text });
         } else if (block.type === "tool_use") {
+          // Surface the actual command/file/pattern so the phone shows what
+          // Claude is doing (Bash command, Read file_path, Grep pattern…),
+          // not just the tool name.
           const name = String(block.name ?? "tool");
-          opts.onEvent({ ev: "tool_use", data: name });
+          const input = block.input as Record<string, unknown> | undefined;
+          let detail = name;
+          if (input) {
+            const focus =
+              input.command ??
+              input.file_path ??
+              input.path ??
+              input.pattern ??
+              input.url ??
+              input.prompt ??
+              input.query;
+            if (typeof focus === "string" && focus) {
+              detail = `${name}: ${focus.length > 240 ? focus.slice(0, 240) + "…" : focus}`;
+            } else {
+              const json = JSON.stringify(input);
+              detail = `${name}: ${json.length > 240 ? json.slice(0, 240) + "…" : json}`;
+            }
+          }
+          opts.onEvent({ ev: "tool_use", data: detail });
+        } else if (block.type === "tool_result") {
+          // tool_result blocks live in user-role messages but Claude Code's
+          // stream-json sometimes surfaces them on assistant turns too — emit
+          // a compact summary so the phone sees what the tool returned.
+          const content = block.content;
+          if (typeof content === "string" && content) {
+            opts.onEvent({
+              ev: "progress",
+              data: `↳ ${content.length > 200 ? content.slice(0, 200) + "…" : content}`,
+            });
+          }
         }
       }
       return;
