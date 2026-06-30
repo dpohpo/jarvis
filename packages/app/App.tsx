@@ -65,53 +65,25 @@ import {
 } from "./src/wakeword";
 
 // ============================================================================
-// §1  Theme tokens — Happy Material 3 Dark (purple-tint)
+// §1  Theme tokens — Paseo design system (teal-green on near-black)
 // ============================================================================
-// Ported from slopus/happy theme.dark.json (source color #18171C).
-// Field names kept identical to the previous Paseo Dark palette so every
-// style reference (C.accent, C.surface0, …) continues to work — only the
-// color values change. This is the lightest-touch way to "look like happy".
-const C = {
-  // 5-layer surface system (jarvis naming → happy-derived values)
-  // surface0 = happy background, surface4 = happy surfaceVariant
-  surface0: "#1C1B1F",         // happy background
-  surface1: "#221F26",         // hover (between bg and card)
-  surface2: "#2B2830",         // card / bubble
-  surface3: "#36333C",         // elevated
-  surface4: "#48454F",         // happy surfaceVariant (highest)
-  surfaceSidebar: "#161518",   // sidebar darker than canvas
-  surfaceSidebarHover: "#1C1B1F",
-  // Text — happy onBackground / onSurfaceVariant / outline
-  fg: "#E5E1E6",               // happy onBackground
-  fgMuted: "#C9C5D0",          // happy onSurfaceVariant
-  fgSubtle: "#928F99",         // happy outline (used for tertiary text)
-  // Brand — happy primary (purple), replaces jarvis teal-green
-  accent: "#C8BFFF",           // happy primary
-  accentBright: "#E5DEFF",     // happy onPrimaryContainer
-  accentDim: "#463A8D",        // happy primaryContainer
-  accentForeground: "#2F2176", // happy onPrimary
-  // Semantic
-  destructive: "#FFB4AB",      // happy error
-  destructiveDim: "#93000A",   // happy errorContainer
-  warn: "#ECB8CE",             // happy tertiary
-  warnDim: "#613B4D",          // happy tertiaryContainer
-  // Borders / dividers — happy outline / outlineVariant
-  border: "#48454F",           // happy outlineVariant
-  borderAccent: "#928F99",     // happy outline
-  // Backdrops
-  backdropStrong: "rgba(0, 0, 0, 0.70)",
-  backdropSoft: "rgba(0, 0, 0, 0.50)",
-} as const;
+// Ported from getpaseo/paseo theme.ts (VERIFIED 2026-06-30 via 3 cross-check
+// Explore agents). All tokens live in src/theme.ts so Phase 4 settings can
+// switch between 6 paseo themes (dark/zinc/midnight/claude/ghostty/light)
+// by swapping one reference. App.tsx reads only C.* / SP / FS / FW / BR / SH,
+// same field names as before — zero style-rewrite needed.
+//
+// Paseo dark default: accent #20744A teal-green on surface0 #181B1A with 5
+// surface layers. Field names kept stable so the ~800 lines of styles in §12
+// inherit the new palette automatically.
+import { DARK, SP as SP_TOK, RD, FS as FS_TOK, FW as FW_TOK, SH as SH_TOK } from "./src/theme";
 
-const SP = { 0: 0, 0.5: 2, 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 12: 48 } as const;
-const FS = { xs: 12, sm: 14, base: 16, lg: 18, xl: 20, "2xl": 22, "3xl": 26, "4xl": 34 } as const;
-const FW = { normal: "normal", medium: "500", semibold: "600", bold: "bold" } as const;
-const BR = { none: 0, sm: 2, base: 4, md: 6, lg: 8, xl: 12, "2xl": 16, "3xl": 20, full: 9999 } as const;
-const SH = {
-  sm: { shadowColor: "rgba(0, 0, 0, 0.25)", shadowOffset: { width: 0, height: 2 }, shadowRadius: 4, elevation: 2 },
-  md: { shadowColor: "rgba(0, 0, 0, 0.20)", shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, elevation: 8 },
-  lg: { shadowColor: "rgba(0, 0, 0, 0.40)", shadowOffset: { width: 0, height: 12 }, shadowRadius: 24, elevation: 8 },
-} as const;
+const C = DARK;
+const SP = SP_TOK;
+const FS = FS_TOK;
+const FW = FW_TOK;
+const BR = RD; // paseo naming is RD; jarvis style code uses BR — alias keeps both working
+const SH = SH_TOK;
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 const DRAWER_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 360);
