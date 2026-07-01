@@ -26,6 +26,7 @@
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
+      "expo-router",
       [
         "expo-camera",
         {

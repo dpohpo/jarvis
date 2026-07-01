@@ -15,4 +15,9 @@ config.resolver.nodeModulesPaths = [
 // pnpm symlinks everywhere — let Metro follow them
 config.resolver.unstable_enableSymlinks = true;
 
+// Unistyles configuration for theme breakpoints
+config.transformer.unstable_allowRequireImports = [
+  "react-native-unistyles",
+];
+
 module.exports = config;
