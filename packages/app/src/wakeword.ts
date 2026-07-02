@@ -1,95 +1,53 @@
 /**
- * Wake-word detection ("Jarvis") via Picovoice Porcupine.
+ * Wake-word detection — STUB (Phase 2).
  *
- * Porcupine uses the BuiltInKeyword.JARVIS model (verified present in the
- * package enum — no training, no .ppn file needed). It needs a free AccessKey
- * from console.picovoice.ai, which the daemon pushes down (config payload) so
- * the secret stays on the Mac.
+ * The main branch still has the old Picovoice Porcupine implementation,
+ * which depended on `@picovoice/porcupine-react-native` (a native module
+ * that needed an AccessKey from console.picovoice.ai that never arrived).
  *
- * IMPORTANT mic coordination: Porcupine and our push-to-talk capture
- * (voice.ts) both drive the SAME react-native-voice-processor singleton, so
- * only one may hold the mic at a time. On wake we stop Porcupine (releases the
- * mic), let the caller run a normal recording, then resume listening.
+ * Phase 14 will port the sherpa-wake version from the
+ * feature/paseo-pixel-perfect branch (Expo Module wrapping
+ * sherpa-onnx KeywordSpotter, account-free, runs offline, model bundled
+ * under android/app/src/main/assets/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/).
+ *
+ * For now: keep the public surface so App.tsx imports don't break, but
+ * every function is a no-op that logs once. App.tsx in this Phase doesn't
+ * use wakeword anyway (no `import { initWake } from "./src/wakeword"`).
  */
-import {
-  PorcupineManager,
-  BuiltInKeyword,
-} from "@picovoice/porcupine-react-native";
 
-let manager: PorcupineManager | null = null;
-let listening = false;
-let onWakeCb: (() => void) | null = null;
+let warned = false;
+function warnOnce(): void {
+  if (!warned) {
+    warned = true;
+    console.warn(
+      "[wake] STUB: wakeword.ts is a no-op on v2-from-scratch until Phase 14 " +
+        "(sherpa-wake port).",
+    );
+  }
+}
 
-/** True once a manager exists (i.e. an AccessKey was provided and init succeeded). */
 export function isWakeReady(): boolean {
-  return manager !== null;
+  return false;
 }
 
 export function isListening(): boolean {
-  return listening;
+  return false;
 }
 
-/**
- * Build the Porcupine manager for the "Jarvis" keyword. Idempotent-ish:
- * tears down any previous instance first. Returns false on bad/empty key.
- */
-export async function initWake(accessKey: string, onWake: () => void): Promise<boolean> {
-  if (!accessKey) return false;
-  await destroyWake();
-  onWakeCb = onWake;
-  try {
-    manager = await PorcupineManager.fromBuiltInKeywords(
-      accessKey,
-      [BuiltInKeyword.JARVIS],
-      (_keywordIndex: number) => {
-        // mic is about to be needed by the recorder — release it first
-        void pauseListening().then(() => onWakeCb?.());
-      },
-      (err: unknown) => {
-        console.error("[wake] porcupine error:", String(err));
-      },
-    );
-    return true;
-  } catch (e) {
-    console.error("[wake] init failed:", String(e));
-    manager = null;
-    return false;
-  }
+export async function initWake(_accessKey: string, _onWake: () => void): Promise<boolean> {
+  warnOnce();
+  return false;
 }
 
-/** Start listening for "Jarvis". No-op if not initialised. */
 export async function startListening(): Promise<boolean> {
-  if (!manager || listening) return listening;
-  try {
-    await manager.start();
-    listening = true;
-    return true;
-  } catch (e) {
-    console.error("[wake] start failed:", String(e));
-    return false;
-  }
+  warnOnce();
+  return false;
 }
 
-/** Stop listening but keep the manager (so we can resume after a recording). */
 export async function pauseListening(): Promise<void> {
-  if (!manager || !listening) return;
-  try {
-    await manager.stop();
-  } catch (e) {
-    console.error("[wake] stop failed:", String(e));
-  }
-  listening = false;
+  // no-op
 }
 
-/** Fully release Porcupine (and its mic). Call when turning the feature off. */
 export async function destroyWake(): Promise<void> {
-  if (!manager) return;
-  try {
-    if (listening) await manager.stop();
-    await manager.delete();
-  } catch (e) {
-    console.error("[wake] destroy failed:", String(e));
-  }
-  manager = null;
-  listening = false;
+  // no-op
 }
