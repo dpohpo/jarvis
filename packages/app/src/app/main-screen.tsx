@@ -13,7 +13,10 @@ import { TopBar } from "../components/top-bar";
 import { LeftSidebar } from "../components/left-sidebar";
 import { EmptyMain } from "../components/empty-main";
 import { ChatSurface } from "../components/chat-surface";
+import { Composer } from "../components/composer";
 import { AddProjectSheet } from "../components/add-project-sheet";
+import { ProviderPicker } from "../components/provider-picker";
+import { SessionPicker } from "../components/session-picker";
 import { AgentStatusPopover } from "../components/agent-status-popover";
 import { TopMenu } from "../components/top-menu";
 import { Drawer } from "../lib/ui-primitives";
@@ -32,17 +35,25 @@ export function MainScreen({ state }: Props) {
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
   const linkUp = useSessionStore((s) => s.linkUp);
   const hasProjects = useWorkspaceStore((s) => s.workspaceList.length > 0);
+  const setAgent = useSessionStore((s) => s.setAgent);
 
   return (
     <View style={styles.root}>
       <TopBar />
       <View style={styles.body}>
-        {hasProjects ? (
-          <ChatSurface />
-        ) : (
-          <EmptyMain />
-        )}
+        {hasProjects ? <ChatSurface /> : <EmptyMain />}
       </View>
+      <Composer
+        onSubmit={() => {
+          /* Phase 14 wires client.submitCommand */
+        }}
+        onMicPressIn={() => {
+          /* Phase 14 wires beginRecording */
+        }}
+        onMicPressOut={() => {
+          /* Phase 14 wires finishRecording */
+        }}
+      />
       <Drawer visible={drawerOpen} onClose={() => setDrawerOpen(false)}>
         <LeftSidebar
           hostName={state.daemonDeviceId}
@@ -51,6 +62,8 @@ export function MainScreen({ state }: Props) {
         />
       </Drawer>
       <AddProjectSheet />
+      <ProviderPicker />
+      <SessionPicker onSelect={(id) => setAgent(id)} />
       <AgentStatusPopover />
       <TopMenu />
     </View>
