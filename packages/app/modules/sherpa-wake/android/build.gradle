@@ -55,11 +55,10 @@ android {
 
 dependencies {
   // sherpa-onnx Kotlin API classes (KeywordSpotter, OnlineStream, JNI bindings).
-  // Extracted from the v1.13.2 AAR — Android Gradle Plugin refuses to package
-  // local .aar deps inside another AAR, so we extract classes.jar + jniLibs/
-  // directly into this module. Native .so files in src/main/jniLibs/ are picked
-  // up automatically; assets under src/main/assets/ merge into the host app.
   implementation files("libs/sherpa-onnx-classes.jar")
+
+  // React Native bridge API (for ReactContextBaseJavaModule, ReactMethod, etc.)
+  compileOnly "com.facebook.react:react-android:+"
 
   // Expo Modules API
   compileOnly project(':expo-modules-core')
