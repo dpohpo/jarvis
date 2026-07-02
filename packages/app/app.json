@@ -42,9 +42,6 @@
         }
       ],
       "expo-audio"
-    ],
-    "autolinking": {
-      "nativeModulesDir": "./modules"
-    }
+    ]
   }
 }
