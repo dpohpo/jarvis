@@ -493,14 +493,47 @@ async function runOneCmd(item: QueueItem): Promise<void> {
         return;
       }
 
-      // task: use cleaned task if provided, else original text
+      // task: show cleaned prompt to user for confirmation BEFORE executing.
+      // The brain cleaned the raw ASR/text into a self-contained instruction.
+      // We send it to the phone as a perm.request so the user sees exactly
+      // what will be dispatched to Claude Code and can approve or reject.
       finalText = decision.task || text;
       remember(from, "assistant", decision.reply || "好的。");
       if (opts?.voiceReply && decision.reply) {
-        // Fire-and-forget the short ack; the actual task result will be
-        // spoken when the executor finishes.
         void speakTo(from, decision.reply);
       }
+
+      // --- confirmation gate (always, for brain-routed tasks) ---
+      store.create(taskId, finalText.slice(0, 120), wd);
+      store.setStatus(taskId, "waiting_approval");
+      const confirmReqId = ulid();
+      const confirmSummary = `确认执行：${finalText.slice(0, 120)}`;
+      sendTo(from, {
+        t: "perm.request", seq: 0,
+        reqId: confirmReqId, taskId,
+        tier: 3,
+        summary: confirmSummary,
+        detail: finalText,
+        timeoutSec: 120,
+        onTimeout: "deny",
+      });
+      // Also TTS-speak the cleaned prompt so voice users hear it.
+      void speakTo(from, `我理解你要：${finalText.slice(0, 200)}。确认执行吗？`, { expectReply: true });
+
+      const userConfirmed = await approvals.wait(confirmReqId, 120);
+      if (!userConfirmed) {
+        store.setStatus(taskId, "error");
+        store.addEvent(taskId, "error", "任务未确认，已取消。");
+        sendTo(from, {
+          t: "task.event", seq: 0, taskId, cmdId,
+          ev: "error", data: "任务未确认，已取消。", ts: Date.now(),
+        });
+        if (opts?.voiceReply) void speakTo(from, "好的，取消执行。");
+        return;
+      }
+      // User approved — proceed to classifyCommand + execute.
+      store.setStatus(taskId, "running");
+      // --- end confirmation gate ---
     } catch (e) {
       log(`brain route failed, falling back to direct task: ${String(e)}`);
       // Don't remember or short-circuit — fall through to direct execution.
