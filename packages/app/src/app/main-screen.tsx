@@ -34,7 +34,14 @@ export function MainScreen({ state }: Props) {
   const drawerOpen = useUiStore((s) => s.drawerOpen);
   const setDrawerOpen = useUiStore((s) => s.setDrawerOpen);
   const linkUp = useSessionStore((s) => s.linkUp);
+  const hasLines = useSessionStore((s) => s.lines.length > 0);
   const hasProjects = useWorkspaceStore((s) => s.workspaceList.length > 0);
+  // Show ChatSurface as soon as EITHER projects exist OR there are chat lines
+  // in the current session. Otherwise voice replies from the daemon land in
+  // an invisible store while the user stares at the EmptyMain placeholder —
+  // which is exactly the "I sent voice, daemon ran the task, but UI didn't
+  // switch" bug.
+  const showChat = hasProjects || hasLines;
   const setInput = useInputStore((s) => s.setInput);
 
   const jarvis = useJarvis(state);
@@ -44,7 +51,7 @@ export function MainScreen({ state }: Props) {
       <TopBar />
       <BusyBanner onStop={() => jarvis.stopTask()} />
       <View style={styles.body}>
-        {hasProjects ? <ChatSurface /> : <EmptyMain />}
+        {showChat ? <ChatSurface /> : <EmptyMain />}
       </View>
       <Composer
         onSubmit={(t) => {
