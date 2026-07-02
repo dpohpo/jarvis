@@ -1,28 +1,58 @@
 /**
- * Wake-word detection ("Jarvis") via the locally-written SherpaWakeModule
- * (Expo Module wrapping sherpa-onnx KeywordSpotter).
+ * Wake-word detection — sherpa-onnx KWS, lazy-loaded.
  *
- * Why sherpa-onnx instead of Picovoice Porcupine:
- *  - Picovoice requires an AccessKey from console.picovoice.ai; registration
- *    never delivered the activation email after multiple attempts.
- *  - sherpa-onnx is Apache-2.0, account-free, runs fully offline, and the
- *    zipformer-gigaspeech 3.3M model can spell JARVIS from BPE tokens
- *    (J=299, A=25, R=24, V=97, I=36, S=3 — all present in tokens.txt).
+ * Native module `sherpa-wake` is an Expo Module wrapping sherpa-onnx
+ * KeywordSpotter. The .so libs + onnx model + tokens.txt live under
+ * modules/sherpa-wake/android/src/main/{jniLibs,assets}.
  *
- * The model + keywords.txt are bundled under
- *   android/app/src/main/assets/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/
+ * CRASH FIX (v6.1): the previous top-level `import SherpaWake from
+ * "sherpa-wake"` threw "Cannot find native module 'SherpaWake'" because
+ * gradle autolinking didn't pick up the pnpm `file:`-linked module —
+ * the JS bundle resolved but the native side wasn't registered, so the
+ * require threw synchronously at module-eval time, killing the RN
+ * runtime before the app could render a single frame.
  *
- * Mic coordination: SherpaWake owns its own AudioRecord (16kHz mono PCM16).
- * voice.ts drives @picovoice/react-native-voice-processor. Android allows
- * concurrent AudioRecords, but to be safe the caller should toggle:
- * start recording → stop wake → ... → stop recording → start wake.
+ * Now: every entry point calls sherpaWakeModule() which lazy-requires
+ * and verifies the native side; if missing it returns null and all
+ * public functions degrade to safe no-ops with a console warning.
+ *
+ * When autolinking is properly configured (see v6.2 todo), the same
+ * code path activates the real native KWS.
  */
-import SherpaWake from "sherpa-wake";
+
+let _sherpaWake: any | null | undefined = undefined;
+
+function sherpaWakeModule(): any | null {
+  if (_sherpaWake !== undefined) return _sherpaWake;
+  try {
+    // require() not import — avoids hoisting, only runs when called.
+    const mod = require("sherpa-wake");
+    // Expo Modules with no native registration return a proxy whose
+    // .init etc. throw when called. Verify at least one method exists.
+    if (mod && typeof mod.init === "function") {
+      _sherpaWake = mod;
+    } else {
+      console.warn("[wake] sherpa-wake module loaded but native side not registered. Wake-word disabled.");
+      _sherpaWake = null;
+    }
+  } catch (e) {
+    console.warn("[wake] sherpa-wake require failed:", String(e), "Wake-word disabled.");
+    _sherpaWake = null;
+  }
+  return _sherpaWake;
+}
 
 let wakeListener: { remove: () => void } | null = null;
 let onWakeCb: (() => void) | null = null;
 let ready = false;
 let listening = false;
+let warnedMissing = false;
+
+function warnMissingOnce(): void {
+  if (warnedMissing) return;
+  warnedMissing = true;
+  console.warn("[wake] Native SherpaWake module not available — wake-word calls are no-ops. Rebuild APK with sherpa-wake autolinked to enable.");
+}
 
 /** True once the model has been successfully loaded. */
 export function isWakeReady(): boolean {
@@ -36,12 +66,16 @@ export function isListening(): boolean {
 /** Load the KWS model from Android assets and register the wake listener.
  *  Idempotent: safe to call multiple times. Returns false on failure. */
 export async function initWake(onWake: () => void): Promise<boolean> {
+  const SherpaWake = sherpaWakeModule();
+  if (!SherpaWake) {
+    warnMissingOnce();
+    return false;
+  }
   if (ready) {
     onWakeCb = onWake;
     return true;
   }
   onWakeCb = onWake;
-  // Subscribe before init so we never miss the first hit.
   if (!wakeListener) {
     wakeListener = SherpaWake.addListener("wake", () => {
       onWakeCb?.();
@@ -49,9 +83,7 @@ export async function initWake(onWake: () => void): Promise<boolean> {
   }
   try {
     ready = await SherpaWake.init();
-    if (!ready) {
-      console.error("[wake] SherpaWake.init() returned false");
-    }
+    if (!ready) console.error("[wake] SherpaWake.init() returned false");
     return ready;
   } catch (e) {
     console.error("[wake] init failed:", String(e));
@@ -60,8 +92,12 @@ export async function initWake(onWake: () => void): Promise<boolean> {
   }
 }
 
-/** Start background AudioRecord + KWS loop. No-op if already running. */
 export async function startListening(): Promise<boolean> {
+  const SherpaWake = sherpaWakeModule();
+  if (!SherpaWake) {
+    warnMissingOnce();
+    return false;
+  }
   if (!ready || listening) return listening;
   try {
     const ok = await SherpaWake.start();
@@ -73,10 +109,13 @@ export async function startListening(): Promise<boolean> {
   }
 }
 
-/** Stop the KWS loop and release the AudioRecord. Keeps the model loaded
- *  so subsequent startListening() is fast. */
 export async function pauseListening(): Promise<void> {
   if (!listening) return;
+  const SherpaWake = sherpaWakeModule();
+  if (!SherpaWake) {
+    listening = false;
+    return;
+  }
   try {
     await SherpaWake.stop();
   } catch (e) {
@@ -85,14 +124,15 @@ export async function pauseListening(): Promise<void> {
   listening = false;
 }
 
-/** Fully release the model + audio resources. Call when the feature is
- *  turned off for good (e.g. user toggled the switch to off). */
 export async function destroyWake(): Promise<void> {
-  try {
-    if (listening) await SherpaWake.stop();
-    await SherpaWake.destroy();
-  } catch (e) {
-    console.error("[wake] destroy failed:", String(e));
+  const SherpaWake = sherpaWakeModule();
+  if (SherpaWake) {
+    try {
+      if (listening) await SherpaWake.stop();
+      await SherpaWake.destroy();
+    } catch (e) {
+      console.error("[wake] destroy failed:", String(e));
+    }
   }
   wakeListener?.remove();
   wakeListener = null;
