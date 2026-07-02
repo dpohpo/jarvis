@@ -124,10 +124,17 @@ export function rememberTurn(turn: Turn): void {
 
 function buildSystemPrompt(): string {
   const dict = loadDict();
+  // Strip leading "/" so the model sees "bht" rather than "/bht" — makes
+  // fuzzy matching against the spoken form (no slash in speech) far more
+  // reliable. Original slash form is preserved in parentheses for context.
+  const dictEntries = dict.map((w) => ({
+    spoken: w.replace(/^\//, ""),
+    canonical: w,
+  }));
   const dictSection =
-    dict.length === 0
+    dictEntries.length === 0
       ? ""
-      : `\n\n用户专属词汇表（ASR 转写时如果听到类似发音，优先匹配成这些词；不要把它们当错字纠正）：\n${dict.map((w) => `- ${w}`).join("\n")}`;
+      : `\n\n## 用户专属词汇表（强匹配优先级最高）\n\nASR 转写经常会把以下词汇听错（同字母顺序错位 d/t、b/d/p 混、中文同音字）。当用户说的话"发音接近"或"字母顺序接近"以下任一词时，必须把它纠正为对应的 canonical 形式，再判断意图。\n\n| 用户说的 | 应该是 | 是什么 |\n|---|---|---|\n${dictEntries.map((e) => `| ${e.spoken} 或近音/近形 | ${e.canonical} | 这是用户在 Mac 上的一个 skill 或 slash command，匹配到时应当回复 reply 告诉用户这是「${e.spoken} 模式/技能」并简要说明，或确认是否要触发该技能 |\n`).join("")}\n\n## 模糊匹配规则（优先级从高到低）\n\n1. **完全相同**：用户说的词 == dict 词（去掉 /）。\n2. **发音相同**：bhd ↔ bht（d/t 在英文字母读音里几乎相同 "tee" vs "dee"），青木 ↔ 清木 ↔ 轻木，金铲铲 ↔ 金铲产。\n3. **字母顺序接近**：bth ↔ bht，amz-research ↔ AMZ research ↔ amazon research。\n4. **大小写无关**：BHT ↔ bht ↔ Bht。\n\n## 匹配到 dict 词汇时的处理\n\n- 如果用户问 "X 是什么" 或 "X 怎么用"，且 X 在 dict：reply 简要解释该 skill/command 是什么 + 怎么触发（输出 canonical 形式让用户知道完整写法），action=answer。\n- 如果用户说 "用 X 帮我 Y"，且 X 在 dict：把 task 清洗为 canonical 形式的指令（如 "请用 /bht 模式帮我整理桌面"），action=task。\n- **绝不要回复 "你提到的 X 具体是指什么？"——只要 dict 里有近音/近形词就匹配上**。\n`;
 
   return `你是 Jarvis，用户的私人语音管家，运行在他的 Mac 上，能操作这台电脑（写代码、跑命令、管文件等，由下游执行器完成）。
 
