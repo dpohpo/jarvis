@@ -15,9 +15,7 @@ import { PermissionsAndroid, Platform } from "react-native";
 import type { PermRequest, TaskEvent } from "@jarvis/protocol";
 import { JarvisClient } from "../client";
 import { playTtsWav, startCapture, stopCapture } from "../voice";
-// Wakeword imports commented out (v6.1) — see the disabled useEffect below.
-// Re-enable when gradle autolinking picks up modules/sherpa-wake.
-// import { initWake, startListening, destroyWake } from "../wakeword";
+import { initWake, startListening, destroyWake } from "../wakeword";
 import type { PhoneState } from "../store";
 import { useSessionStore } from "../stores/session-store";
 import { useWorkspaceStore, type Agent, type AgentStatus } from "../stores/workspace-store";
@@ -154,18 +152,17 @@ export function useJarvis(state: PhoneState) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkUp]);
 
-  // Wake-word auto-init — DISABLED in v6.1.
-  // The sherpa-wake Expo Module is not yet autolinked into the gradle
-  // build (pnpm file: workspace link works for TS but gradle doesn't
-  // see the module's expo-module.config.json). Calling initWake() used
-  // to throw "Cannot find native module 'SherpaWake'" synchronously,
-  // crashing the app before any UI rendered. Until autolinking is
-  // properly configured, we skip the wake-word path entirely. Voice
-  // still works via the composer mic button.
-  // When re-enabling: verify gradle picks up modules/sherpa-wake (check
-  // `expo-modules-autolinking discover` output) AND the .so libs +
-  // model assets land in lib/arm64-v8a / assets of the final APK.
-  /*
+  // Wake-word auto-init. SherpaWake needs no AccessKey (offline model
+  // bundled in modules/sherpa-wake/android/src/main/assets/). When the
+  // user has settings.autoWake=true, we initialize on first link-up and
+  // start listening. On wake, we kick the same autoListen chain that
+  // VAD auto-mode uses, so the user can say "Jarvis" → speak prompt →
+  // hear TTS → "Jarvis" → speak again, fully hands-free.
+  //
+  // Phase 15-v7: re-enabled after fixing autolinking (app.json now sets
+  // expo.autolinking.nativeModulesDir = "./modules" so prebuild picks up
+  // sherpa-wake + sherpa-vad). Lazy Proxy in modules/sherpa-wake/index.ts
+  // still degrades gracefully to no-op if the native side isn't present.
   useEffect(() => {
     if (!settings.autoWake || !linkUp) return;
     let cancelled = false;
@@ -180,8 +177,8 @@ export function useJarvis(state: PhoneState) {
       cancelled = true;
       void destroyWake();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.autoWake, linkUp]);
-  */
 
   // ----- submit -----
   const submit = (text: string) => {

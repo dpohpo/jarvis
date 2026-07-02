@@ -454,8 +454,61 @@ function taskSummaries(): TaskSummary[] {
 async function runOneCmd(item: QueueItem): Promise<void> {
   const { from, cmdId, text, workdir, opts, taskId } = item;
   const wd = workdir ?? state.workdir;
-  const verdict = classifyCommand(text, wd);
-  store.create(taskId, text.slice(0, 120), wd);
+
+  // Phase 15-v7: route through the brain (GLM) for clean + decide, even for
+  // typed text submits. Mirrors what the voice path already does, so typed
+  // prompts also benefit from:
+  //   - ASR-like cleanup (typos, ambiguous shorthand → clean intent)
+  //   - Direct answer for "what's X?" style questions (no need to spawn
+  //     Claude Code for a knowledge question — saves time + money)
+  //   - Clarifying-question branch when intent is ambiguous
+  // Memory: chatHistory is keyed by device id so each phone keeps its own
+  // rolling context. brain router pulls ~/.jarvis/dict.json internally for
+  // domain term correction (e.g. user-specific jargon, project names).
+  // Slash commands (text starting with /) bypass the brain entirely —
+  // those are pure client-control signals handled by handleSlash().
+  let finalText = text;
+  let brainShortCircuit: null | { reply: string; expectReply: boolean } = null;
+  if (!text.trim().startsWith("/")) {
+    const history = chatHistory.get(from) ?? [];
+    try {
+      const decision = await route(text, history);
+      log(`brain: ${decision.action}${decision.task ? ` task='${decision.task.slice(0, 60)}'` : ""}`);
+      remember(from, "user", text);
+
+      if (decision.action === "answer" || decision.action === "clarify") {
+        remember(from, "assistant", decision.reply);
+        store.create(taskId, text.slice(0, 120), wd);
+        store.setStatus(taskId, "done");
+        store.addEvent(taskId, "done", decision.reply);
+        sendTo(from, {
+          t: "task.event", seq: 0, taskId, cmdId,
+          ev: "done", data: decision.reply, ts: Date.now(),
+        });
+        if (opts?.voiceReply) {
+          void speakTo(from, decision.reply, {
+            expectReply: decision.action === "clarify",
+          });
+        }
+        return;
+      }
+
+      // task: use cleaned task if provided, else original text
+      finalText = decision.task || text;
+      remember(from, "assistant", decision.reply || "好的。");
+      if (opts?.voiceReply && decision.reply) {
+        // Fire-and-forget the short ack; the actual task result will be
+        // spoken when the executor finishes.
+        void speakTo(from, decision.reply);
+      }
+    } catch (e) {
+      log(`brain route failed, falling back to direct task: ${String(e)}`);
+      // Don't remember or short-circuit — fall through to direct execution.
+    }
+  }
+
+  const verdict = classifyCommand(finalText, wd);
+  store.create(taskId, finalText.slice(0, 120), wd);
   log(`cmd ${cmdId} → task ${taskId} (tier ${verdict.tier}: ${verdict.reason})`);
 
   const emit = (ev: Parameters<typeof store.addEvent>[1], data: string) => {
@@ -492,7 +545,7 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   let task;
   try {
     task = runClaudeCode({
-      prompt: text,
+      prompt: finalText,
       workdir: wd,
       onSessionId: (sid) => store.setAgentSession(taskId, sid),
       onEvent: (e) => emit(e.ev, e.data),
