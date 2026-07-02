@@ -27,7 +27,7 @@ interface UiState {
   sessionPickerOpen: boolean;     // 7.jpg
   addProjectOpen: boolean;        // 2.1.jpg
   settingsOpen: boolean;          // 8.2.jpg
-  settingsSection: SettingsSection;
+  settingsSection: SettingsSection | null;  // null = list view, set = section detail
   topMenuOpen: boolean;           // 6.jpg
   agentStatusOpen: boolean;       // 5.jpg
   attachMenuOpen: boolean;        // 3.2.jpg (Composer + button)
@@ -37,7 +37,7 @@ interface UiState {
   setSessionPickerOpen: (v: boolean) => void;
   setAddProjectOpen: (v: boolean) => void;
   setSettingsOpen: (v: boolean) => void;
-  setSettingsSection: (s: SettingsSection) => void;
+  setSettingsSection: (s: SettingsSection | null) => void;
   setTopMenuOpen: (v: boolean) => void;
   setAgentStatusOpen: (v: boolean) => void;
   setAttachMenuOpen: (v: boolean) => void;
@@ -51,7 +51,7 @@ export const useUiStore = create<UiState>((set) => ({
   sessionPickerOpen: false,
   addProjectOpen: false,
   settingsOpen: false,
-  settingsSection: "general",
+  settingsSection: null,
   topMenuOpen: false,
   agentStatusOpen: false,
   attachMenuOpen: false,

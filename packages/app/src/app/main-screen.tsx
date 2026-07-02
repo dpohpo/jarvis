@@ -19,6 +19,7 @@ import { ProviderPicker } from "../components/provider-picker";
 import { SessionPicker } from "../components/session-picker";
 import { AgentStatusPopover } from "../components/agent-status-popover";
 import { TopMenu } from "../components/top-menu";
+import { SettingsScreen } from "./settings-screen";
 import { Drawer } from "../lib/ui-primitives";
 import { C } from "../theme";
 import { useUiStore } from "../stores/ui-store";
@@ -66,6 +67,7 @@ export function MainScreen({ state }: Props) {
       <SessionPicker onSelect={(id) => setAgent(id)} />
       <AgentStatusPopover />
       <TopMenu />
+      <SettingsScreen />
     </View>
   );
 }
