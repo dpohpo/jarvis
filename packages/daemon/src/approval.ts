@@ -55,6 +55,16 @@ export function classifyCommand(text: string, workdir: string): TierVerdict {
   const pathMentions = text.match(/(?:^|[\s"'`])(\/(?:[\w.-]+\/)*[\w.-]+|~\/[\w./-]+)/g) ?? [];
   for (const raw of pathMentions) {
     const p = raw.trim().replace(/^["'`]/, "");
+    // Phase 15-v9.1: skip slash commands. A token like "/wefile" or
+    // "/bht" is a Claude Code skill invocation, not a filesystem path.
+    // The skill itself is dispatched to Claude Code (which has its own
+    // approval gate); treating it as a "path outside workdir" forces a
+    // Tier 3 phone approval that has nothing to do with the actual risk.
+    // Heuristic: single-segment slash tokens (no second "/") + short
+    // (<32 chars) + looks like a skill name (alphanumeric/dash/underscore).
+    if (/^\/[A-Za-z][\w-]{0,31}$/.test(p)) {
+      continue;
+    }
     const abs = p.startsWith("~/") ? p.replace("~", process.env.HOME ?? "") : p;
     if (abs.startsWith("/") && !abs.startsWith(workdir) && !abs.startsWith("/tmp")) {
       return { tier: 3, reason: `path outside workdir: ${p}` };
