@@ -207,3 +207,14 @@ export type AsrFinal = z.infer<typeof AsrFinal>;
 export type TtsStart = z.infer<typeof TtsStart>;
 export type TtsChunk = z.infer<typeof TtsChunk>;
 export type TtsEnd = z.infer<typeof TtsEnd>;
+
+// Phase 15-v9: workspace config (ported from .jarvis-src). Used by
+// daemon's brain/storage.ts. Schema is intentionally permissive (mode +
+// engine + optional tmuxTarget + sessionId) — daemon-side validated too.
+export const WorkspaceConfig = z.object({
+  mode: z.enum(["spawn", "tmux"]),
+  engine: z.enum(["claude", "codex"]),
+  tmuxTarget: z.string().optional(),
+  sessionId: z.string().optional(),
+});
+export type WorkspaceConfig = z.infer<typeof WorkspaceConfig>;
