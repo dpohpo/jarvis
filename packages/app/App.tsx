@@ -1,15 +1,5 @@
 /**
- * App.tsx — v2 entry (Phase 4 + Phase 6 settings load).
- *
- * Responsibilities (kept narrow on purpose):
- *  1. crypto-init once at boot
- *  2. load PhoneState (pairing) from SecureStore
- *  3. load AppSettings (theme/provider/autoWake etc.) from SecureStore
- *  4. branch: not-booted → LoadingScreen | not-paired → LoginScreen | else → MainScreen
- *
- * All legacy business state/effects/handlers from the 570-line MVP now live
- * in ./src/legacy/app-legacy.tsx as a reference. Phase 7 ports PairingScreen,
- * Phase 8 ports ConsoleScreen, Phase 14 ports voice/wakeword/client hooks.
+ * App.tsx — v2 entry (Phase 4 + Phase 6 settings + Phase 7 LoginScreen onPaired).
  */
 import { useEffect, useState } from "react";
 import { KeyboardProvider } from "react-native-keyboard-controller";
@@ -31,7 +21,6 @@ export default function App() {
 function Root() {
   const [booted, setBooted] = useState(false);
   const [state, setState] = useState<PhoneState | null>(null);
-  const setSettingsReady = useSettingsStore((s) => s.setReady);
 
   useEffect(() => {
     void (async () => {
@@ -39,13 +28,11 @@ function Root() {
       const [s, settings] = await Promise.all([loadState(), loadSettings()]);
       setState(s);
       useSettingsStore.setState({ settings, ready: true });
-      setSettingsReady(true);
       setBooted(true);
     })();
-  }, [setSettingsReady]);
+  }, []);
 
   if (!booted) return <LoadingScreen />;
-  if (!state) return <LoginScreen />;
+  if (!state) return <LoginScreen onPaired={setState} />;
   return <MainScreen state={state} />;
 }
-
