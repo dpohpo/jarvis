@@ -8,6 +8,7 @@
 export type Tier = 1 | 2 | 3;
 
 const TIER3_PATTERNS: RegExp[] = [
+  // Shell-shaped danger
   /\bsudo\b/,
   /\brm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)\b/i, // rm -rf and friends
   /\bgit\s+push\s+.*--force/,
@@ -15,6 +16,23 @@ const TIER3_PATTERNS: RegExp[] = [
   /\bdiskutil\b|\bmkfs\b|\bdd\s+if=/,
   /\b(shutdown|reboot|halt)\b/,
   /\bsecurity\s+(dump-keychain|find-generic-password)/,
+  // Intent-shaped danger: sending / posting / forwarding to external services.
+  // These need user approval because they leave the local machine and can't
+  // be undone. Matches both Chinese (发送/转发/发到) and English (send/post).
+  // Note: \b doesn't work on CJK characters in JS regex, so we omit \b around
+  // Chinese terms and rely on the (capture)+ instead.
+  /(发送|发送给|发给|发到|发至|转发|转告|告诉|通知)[\s\S]{0,80}(微信|企业微信|文件传输助手|邮件|email|slack|discord|telegram|朋友圈|公众号|QQ|手机号|电话|短信|sms|老婆|老公|老板|同事|客户|朋友|爸妈|父母)/i,
+  /\b(send|post|forward|share|message)\b[\s\S]{0,80}\b(to|via|through)\b[\s\S]{0,80}\b(wechat|wecom|email|slack|discord|telegram|whatsapp|sms|phone)\b/i,
+  // Deleting user data
+  /(删除|清空|抹掉|清除)[\s\S]{0,80}(文件|文件夹|桌面|文档|图片|照片|数据库)/i,
+  /\b(delete|wipe|clear|purge)\b[\s\S]{0,80}\b(files?|folder|desktop|documents?|photos?|database)\b/i,
+  // Modifying system config / installing software
+  /(安装|卸载|升级|更新)[\s\S]{0,80}(软件|应用|app|系统|驱动|service)/i,
+  /\b(install|uninstall|upgrade|update)\b[\s\S]{0,80}\b(software|app|application|system|driver|service)\b/i,
+  // Money / payments / API keys
+  /(支付|付款|转账|买|订购)/,
+  /\b(pay|payment|transfer|purchase|order)\b/i,
+  /(api[_\s-]?key|secret|token|password|密码|口令|密钥)/i,
 ];
 
 const TIER2_PATTERNS: RegExp[] = [/\bgit\s+(commit|push)\b/, /\bnpm\s+publish\b/];
