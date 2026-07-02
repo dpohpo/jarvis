@@ -57,9 +57,17 @@ export function MainScreen({ state }: Props) {
           hostName={state.daemonDeviceId}
           linkUp={linkUp}
           onHome={() => setDrawerOpen(false)}
+          onRename={(oldName, newName) => jarvis.renameAgent(oldName, newName)}
+          onArchive={(name) => {
+            // Archive mirrors to delete until a separate archived section exists.
+            jarvis.deleteAgent(name);
+          }}
+          onDelete={(name) => jarvis.deleteAgent(name)}
         />
       </Drawer>
-      <AddProjectSheet />
+      <AddProjectSheet
+        onCreate={(name, cfg) => jarvis.createWorkspace(name, cfg)}
+      />
       <ProviderPicker />
       <SessionPicker onSelect={(id) => jarvis.selectAgent(id)} />
       <AgentStatusPopover />

@@ -35,7 +35,7 @@ this single mistake.
 ### Accent — paseo dark green (VERIFIED, was hallucinated as purple)
 | Token | Hex | Source |
 |---|---|---|
-| `accent` | `#307040` | "Paseo" title in 1.jpg (14641 px in quantized bucket — strong signal) |
+| `accent` | `#307040` | "Jarvis" title in 1.jpg (14641 px in quantized bucket — strong signal) |
 | `accentHover` | `#3B6C4D` | lighter green from title anti-aliasing |
 | `accentDim` | `#4F8E5C` | hover/pressed (estimated from accent) |
 
@@ -68,7 +68,7 @@ this single mistake.
 - **Canvas**: full white
 - **Logo**: circular, ~96dp diameter, **no visible border** (background matches canvas), contains a dark pictogram (`#101010`)
   - Pictogram is NOT an emoji — it's a vector icon. Candidates from lucide-react-native: `Sparkles`, `Hexagon`, `Bot`, `MessageCircle`. Without higher-res I'll go with `Hexagon` (matches the geometric mark in the screenshot)
-- **"Paseo" title**: `#307040` (dark green), large (24-28pt), bold, centered, ~45% down
+- **"Jarvis" title**: `#307040` (dark green), large (24-28pt), bold, centered, ~45% down
 - **Subtitle** "Control all computer agents from your phone": `#707070`, 13-14pt, centered
 - **"Pair new server" button**: full-width-ish (margins ~24dp), **black fill `#101010`**, white text, ~14pt semibold, **pill radius** (looks fully rounded, ~9999 or at least 24dp)
 - **"Restore from backup"**: text-only link, `#707070`, underlined or just colored

@@ -22,7 +22,7 @@ export const C = {
   fgFaint: "#A0A0A0",      // placeholder text (inputs)
 
   // ── Accent — paseo dark green (NOT purple) ─────────────────────────
-  accent: "#307040",       // "Paseo" title, selected-state border, status done
+  accent: "#307040",       // "Jarvis" title, selected-state border, status done
   accentHover: "#3B6C4D",  // hover (lighter green from anti-alias)
   accentDim: "#4F8E5C",    // pressed/soft
   accentForeground: "#FFFFFF", // text on accent fill

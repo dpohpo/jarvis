@@ -52,7 +52,7 @@ export function Composer({ onSubmit, onMicPressIn, onMicPressOut }: Props) {
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder="Message Paseo…"
+          placeholder="Message Jarvis…"
           placeholderTextColor={C.fgFaint}
           multiline
           maxLength={4000}

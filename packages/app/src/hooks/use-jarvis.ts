@@ -19,7 +19,7 @@ import type { PhoneState } from "../store";
 import { useSessionStore } from "../stores/session-store";
 import { useWorkspaceStore, type Agent, type AgentStatus } from "../stores/workspace-store";
 import { useInputStore, type RecMode } from "../stores/input-store";
-import { useSettingsStore } from "../stores/settings-store";
+import { saveSettings, useSettingsStore } from "../stores/settings-store";
 import { useUiStore } from "../stores/ui-store";
 
 const AUTO_LISTEN_DELAY_MS = 500;
@@ -182,6 +182,68 @@ export function useJarvis(state: PhoneState) {
     (client.current as any)?.switchWorkspace?.(name);
   };
 
+  // ----- create project (AddProjectSheet Create button) -----
+  // Sends the new project's name + spawn config to the daemon so the agent
+  // there starts up. Also pushes a local "system" line so the chat surface
+  // shows the create event immediately, before the daemon's task event.
+  const createWorkspace = (
+    name: string,
+    cfg: { spawnMode: "spawn" | "tmux"; engine: string; tmuxTarget?: string },
+  ) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    useWorkspaceStore.getState().addWorkspace(trimmed);
+    useWorkspaceStore.getState().setWorkspaceActive(trimmed);
+    (client.current as any)?.setWorkspaceConfig?.({
+      name: trimmed,
+      spawnMode: cfg.spawnMode,
+      engine: cfg.engine,
+      tmuxTarget: cfg.tmuxTarget ?? "",
+    });
+    // Kick off the agent so the daemon records the workspace
+    (client.current as any)?.submitCommand?.(`init project: ${trimmed}`);
+    useSessionStore.getState().pushLine({
+      kind: "system",
+      text: `Created project "${trimmed}"`,
+    });
+  };
+
+  // ----- agent rename / delete (ProjectContextMenu) -----
+  const renameAgent = (id: string, name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    useWorkspaceStore.getState().upsertAgent({ id, title: trimmed, status: "idle" });
+    (client.current as any)?.agentRename?.(id, trimmed);
+  };
+
+  const deleteAgent = (id: string) => {
+    useWorkspaceStore.getState().removeAgent(id);
+    (client.current as any)?.deleteAgent?.(id);
+    // If the deleted agent was selected, drop the selection so the chat
+    // surface clears on next render.
+    const cur = useSessionStore.getState().currentAgentId;
+    if (cur === id) useSessionStore.getState().setAgent("");
+  };
+
+  // ----- provider/model/mode apply (ProviderPicker Apply button) -----
+  // Persists the selection so it survives app restart, then notifies the
+  // daemon (best-effort — daemon may not yet expose provider.switch).
+  const applyProvider = (
+    provider: string,
+    model: string,
+    mode: string,
+  ) => {
+    const next = {
+      ...settings,
+      defaultProvider: provider as any,
+      defaultModel: model as any,
+      defaultMode: mode as any,
+    };
+    useSettingsStore.setState({ settings: next });
+    void saveSettings(next);
+    (client.current as any)?.switchProvider?.(provider, model, mode);
+  };
+
   return {
     submit,
     onMicPressIn,
@@ -189,6 +251,10 @@ export function useJarvis(state: PhoneState) {
     respondPermission,
     selectAgent,
     switchWorkspace,
+    createWorkspace,
+    renameAgent,
+    deleteAgent,
+    applyProvider,
   };
 }
 

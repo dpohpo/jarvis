@@ -34,6 +34,7 @@ interface WorkspaceState {
   setAgents: (agents: Agent[]) => void;
   upsertAgent: (a: Agent) => void;
   removeAgent: (id: string) => void;
+  addWorkspace: (name: string) => void;  // dedupes
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
@@ -52,4 +53,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       return { agents: next };
     }),
   removeAgent: (id) => set((s) => ({ agents: s.agents.filter((x) => x.id !== id) })),
+  addWorkspace: (name) =>
+    set((s) =>
+      s.workspaceList.includes(name)
+        ? s
+        : { workspaceList: [...s.workspaceList, name] },
+    ),
 }));

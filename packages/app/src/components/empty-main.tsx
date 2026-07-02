@@ -16,7 +16,7 @@ import { useWorkspaceStore } from "../stores/workspace-store";
 export function EmptyMain() {
   const setAddProjectOpen = useUiStore((s) => s.setAddProjectOpen);
   const workspaceActive = useWorkspaceStore((s) => s.workspaceActive);
-  const name = workspaceActive || "Paseo";
+  const name = workspaceActive || "Jarvis";
 
   return (
     <View style={styles.root}>

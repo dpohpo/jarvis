@@ -33,7 +33,7 @@ export function TopBar() {
 
       <Pressable onPress={() => setSessionPickerOpen(true)} style={styles.titleBtn} hitSlop={4}>
         <Text style={styles.title} numberOfLines={1}>
-          {workspaceActive || "Paseo"}
+          {workspaceActive || "Jarvis"}
         </Text>
         <ChevronDown size={14} color={C.fgSubtle} />
       </Pressable>

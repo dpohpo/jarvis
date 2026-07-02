@@ -2,7 +2,7 @@
  * Typography scale — font-size + font-weight tokens.
  *
  * Extracted from screenshots:
- *  - Login title "Paseo" (becomes "Jarvis"): 32px bold
+ *  - Login title "Jarvis" (becomes "Jarvis"): 32px bold
  *  - Header workspace name: 16px semibold
  *  - Body / message text: 14-15px regular
  *  - Section headers (PROJECTS / SESSIONS): 11px semibold uppercase

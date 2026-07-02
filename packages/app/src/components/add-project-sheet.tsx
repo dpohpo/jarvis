@@ -13,11 +13,17 @@ import { useSettingsStore, type Provider } from "../stores/settings-store";
 
 const ENGINES: Provider[] = ["claude", "codex", "copilot", "gemini"];
 
-export function AddProjectSheet() {
+interface Props {
+  onCreate?: (
+    name: string,
+    cfg: { spawnMode: "spawn" | "tmux"; engine: string; tmuxTarget?: string },
+  ) => void;
+}
+
+export function AddProjectSheet({ onCreate }: Props = {}) {
   const visible = useUiStore((s) => s.addProjectOpen);
   const setVisible = useUiStore((s) => s.setAddProjectOpen);
-  const setWorkspaceList = useWorkspaceStore((s) => s.setWorkspaceList);
-  const existing = useWorkspaceStore((s) => s.workspaceList);
+  const addWorkspace = useWorkspaceStore((s) => s.addWorkspace);
   const setWorkspaceActive = useWorkspaceStore((s) => s.setWorkspaceActive);
   const settings = useSettingsStore((s) => s.settings);
 
@@ -35,8 +41,14 @@ export function AddProjectSheet() {
   const create = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (!existing.includes(trimmed)) setWorkspaceList([...existing, trimmed]);
+    addWorkspace(trimmed);
     setWorkspaceActive(trimmed);
+    // Notify daemon (best-effort — hook may not be wired if running standalone)
+    onCreate?.(trimmed, {
+      spawnMode,
+      engine,
+      tmuxTarget: spawnMode === "tmux" ? tmuxPane : undefined,
+    });
     close();
   };
 

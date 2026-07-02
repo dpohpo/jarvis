@@ -5,7 +5,7 @@
  *  - White canvas (#FFFFFF)
  *  - Centered circular logo (~96dp) — black vector glyph on transparent
  *    background (no border visible against white canvas)
- *  - "Paseo" title in dark green (#307040), bold, ~28pt
+ *  - "Jarvis" title in dark green (#307040), bold, ~28pt
  *  - Subtitle "#707070", 13pt, centered
  *  - "Pair new server" button — BLACK fill (#101010), white text, pill radius
  *  - "Restore from backup" text link, #707070
@@ -84,7 +84,7 @@ export function LoginScreen({ onPaired }: Props) {
           <Hexagon size={48} color={C.btnPrimary} strokeWidth={2} />
         </View>
 
-        <Text style={styles.title}>Paseo</Text>
+        <Text style={styles.title}>Jarvis</Text>
         <Text style={styles.subtitle}>Control all computer agents from your phone</Text>
 
         {pairing ? null : manualPair ? (
