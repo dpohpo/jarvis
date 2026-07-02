@@ -15,6 +15,7 @@ import { SessionPicker } from "../components/session-picker";
 import { AgentStatusPopover } from "../components/agent-status-popover";
 import { TopMenu } from "../components/top-menu";
 import { PermissionModal } from "../components/permission-modal";
+import { BusyBanner } from "../components/busy-banner";
 import { SettingsScreen } from "./settings-screen";
 import { Drawer } from "../lib/ui-primitives";
 import { C } from "../theme";
@@ -41,6 +42,7 @@ export function MainScreen({ state }: Props) {
   return (
     <View style={styles.root}>
       <TopBar />
+      <BusyBanner onStop={() => jarvis.stopTask()} />
       <View style={styles.body}>
         {hasProjects ? <ChatSurface /> : <EmptyMain />}
       </View>

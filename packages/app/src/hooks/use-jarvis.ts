@@ -38,6 +38,7 @@ export function useJarvis(state: PhoneState) {
 
   const pushLine = useSessionStore((s) => s.pushLine);
   const setLinkUp = useSessionStore((s) => s.setLinkUp);
+  const linkUp = useSessionStore((s) => s.linkUp);
   const setBusy = useSessionStore((s) => s.setBusy);
   const upsertAgent = useWorkspaceStore((s) => s.upsertAgent);
 
@@ -87,12 +88,47 @@ export function useJarvis(state: PhoneState) {
     });
     client.current = c;
     c.start();
+
+    // Session recovery: as soon as the link comes up, pull the daemon's
+    // current task list so the sidebar / session picker reflects what's
+    // actually running on the Mac. onTaskState callback above will fire
+    // and replace the local agent list with the daemon's snapshot.
+    // We retry on a timer because linkUp is async (depends on relay round-
+    // trip); 2s × 3 attempts is a reasonable backoff for cold start.
+    let cancelled = false;
+    const tryPull = (attempt: number) => {
+      if (cancelled || !client.current) return;
+      if (attempt > 3) return;
+      // requestTaskList is a no-op if the link isn't up yet; the daemon
+      // simply won't reply. The onLink(true) callback is what tells us
+      // the channel is ready — schedule one pull there.
+      setTimeout(() => {
+        if (cancelled) return;
+        if (useSessionStore.getState().linkUp) {
+          client.current?.requestTaskList();
+        } else {
+          tryPull(attempt + 1);
+        }
+      }, 600 * attempt);
+    };
+    tryPull(1);
+
     return () => {
+      cancelled = true;
       c.stop();
       client.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state]);
+
+  // First-link-up hook: when linkUp flips false→true, immediately request
+  // the task list so the user sees their sessions restored.
+  useEffect(() => {
+    if (linkUp && client.current) {
+      client.current.requestTaskList();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkUp]);
 
   // ----- submit -----
   const submit = (text: string) => {
@@ -100,6 +136,15 @@ export function useJarvis(state: PhoneState) {
     if (!trimmed || !client.current) return;
     pushLine({ kind: "user", text: trimmed });
     client.current.submitCommand(trimmed);
+  };
+
+  // ----- task control -----
+  const stopTask = (taskId?: string) => {
+    client.current?.stopTask(taskId);
+  };
+
+  const requestTaskList = () => {
+    client.current?.requestTaskList();
   };
 
   // ----- voice (3-mode state machine ported from app-legacy) -----
@@ -255,6 +300,8 @@ export function useJarvis(state: PhoneState) {
 
   return {
     submit,
+    stopTask,
+    requestTaskList,
     onMicPressIn,
     onMicPressOut,
     respondPermission,
