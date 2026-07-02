@@ -1,8 +1,12 @@
 /**
- * App.tsx — v2 entry (Phase 4 + Phase 6 settings + Phase 7 LoginScreen onPaired).
+ * App.tsx — v2 entry.
+ *
+ * Phase 15: dropped react-native-keyboard-controller (was dragging in
+ * reanimated + worklets which CMake-build fail on exFAT). RN's built-in
+ * KeyboardAvoidingView handles the Android keyboard fine for our 2 input
+ * fields (composer + manual JSON pair).
  */
 import { useEffect, useState } from "react";
-import { KeyboardProvider } from "react-native-keyboard-controller";
 import { ensureCrypto } from "./src/crypto-init";
 import { loadState, type PhoneState } from "./src/store";
 import { loadSettings, useSettingsStore } from "./src/stores/settings-store";
@@ -11,11 +15,7 @@ import { LoginScreen } from "./src/app/login-screen";
 import { MainScreen } from "./src/app/main-screen";
 
 export default function App() {
-  return (
-    <KeyboardProvider>
-      <Root />
-    </KeyboardProvider>
-  );
+  return <Root />;
 }
 
 function Root() {
@@ -36,3 +36,4 @@ function Root() {
   if (!state) return <LoginScreen onPaired={setState} />;
   return <MainScreen state={state} />;
 }
+
