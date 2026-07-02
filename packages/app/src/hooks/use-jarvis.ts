@@ -35,6 +35,20 @@ function statusFromEvent(e: TaskEvent["ev"]): AgentStatus | null {
   return null;
 }
 
+/** Map a daemon TaskSummary.status to the app's AgentStatus enum.
+ *  Daemon: running | waiting_approval | paused | done | error.
+ *  App:    idle | running | done | error | needs_input | attention. */
+function mapDaemonStatus(s: string): AgentStatus {
+  switch (s) {
+    case "running": return "running";
+    case "waiting_approval": return "needs_input";
+    case "paused": return "idle";
+    case "done": return "done";
+    case "error": return "error";
+    default: return "idle";
+  }
+}
+
 export function useJarvis(state: PhoneState) {
   const client = useRef<JarvisClient | null>(null);
   const pressStart = useRef(0);
@@ -80,11 +94,18 @@ export function useJarvis(state: PhoneState) {
         }
       },
       onTaskState: (tasks) => {
-        // Replace agent list with current snapshot
+        // Replace agent list with current snapshot.
+        // Daemon protocol TaskStatus enum: running | waiting_approval |
+        // paused | done | error. App's AgentStatus enum is: idle | running
+        // | done | error | needs_input | attention. Map so the popover's
+        // grouped[status] lookup always hits a valid bucket — without
+        // this, a daemon task with status "waiting_approval" makes
+        // grouped["waiting_approval"] undefined and the .push crashes the
+        // whole app on first TaskState event.
         const agents: Agent[] = tasks.map((t) => ({
           id: t.taskId,
           title: t.title,
-          status: (t.status as AgentStatus) ?? "idle",
+          status: mapDaemonStatus(t.status),
         }));
         useWorkspaceStore.getState().setAgents(agents);
       },
