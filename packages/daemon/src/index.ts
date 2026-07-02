@@ -47,7 +47,7 @@ import { runClaudeCode } from "./executors/claude-code.js";
 import { ApprovalBroker, classifyCommand } from "./approval.js";
 import { pcm16ToWav } from "./voice/wav.js";
 import { ensureAsrSidecar, synthesizeAny, transcribeAny } from "./voice/local.js";
-import { route, type Turn } from "./brain/router.js";
+import { route, rememberTurn, type Turn } from "./brain/router.js";
 
 // load ~/.jarvis/env (KEY=value lines) before reading any config
 try {
@@ -149,6 +149,9 @@ function remember(deviceId: string, role: Turn["role"], content: string): void {
   const h = chatHistory.get(deviceId) ?? [];
   h.push({ role, content });
   chatHistory.set(deviceId, h.slice(-20));
+  // Persist to ~/.jarvis/memory.jsonl so the brain has long-term recall
+  // across daemon restarts (router.ts blends this with in-memory history).
+  rememberTurn({ role, content });
 }
 
 /** 16kHz/22kHz mono PCM16 WAV → playback ms, straight from the header. */
