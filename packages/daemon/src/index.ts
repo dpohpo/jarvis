@@ -489,14 +489,36 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   }
 
   store.setStatus(taskId, "running");
-  const task = runClaudeCode({
-    prompt: text,
-    workdir: wd,
-    onSessionId: (sid) => store.setAgentSession(taskId, sid),
-    onEvent: (e) => emit(e.ev, e.data),
-  });
+  let task;
+  try {
+    task = runClaudeCode({
+      prompt: text,
+      workdir: wd,
+      onSessionId: (sid) => store.setAgentSession(taskId, sid),
+      onEvent: (e) => emit(e.ev, e.data),
+    });
+  } catch (e) {
+    // Spawn failure (e.g. claude binary missing, Sequoia SIGKILL, ENOSYS).
+    // Don't crash the daemon — report to the phone so the user sees the error
+    // and can retry, then mark the task as failed.
+    const msg = String(e instanceof Error ? e.message : e);
+    log(`[runOneCmd] spawn failed: ${msg}`);
+    emit("error", `daemon spawn failed: ${msg.slice(0, 200)}`);
+    store.setStatus(taskId, "error");
+    return;
+  }
   active = { taskId, from, kill: task.kill };
-  const { ok, result } = await task.done;
+  let ok = false;
+  let result = "";
+  try {
+    const r = await task.done;
+    ok = r.ok;
+    result = r.result;
+  } catch (e) {
+    // Task itself threw (post-spawn) — e.g. daemon shutdown mid-run.
+    result = String(e instanceof Error ? e.message : e);
+    ok = false;
+  }
   active = null;
   store.setStatus(taskId, ok ? "done" : "error");
   if (opts?.voiceReply) {

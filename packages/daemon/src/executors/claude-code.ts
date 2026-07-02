@@ -31,9 +31,26 @@ const CANDIDATE_BINS = [
   `${process.env.HOME}/.claude/local/claude`,
 ].filter((p): p is string => !!p);
 
+// Sequoia silently SIGKILLs unsigned claude.exe even though `file` says
+// it's Mach-O arm64 and the symlink resolves. The robust entry point is
+// `node cli.js` from the @anthropic-ai/claude-code npm install under
+// ~/.claude-cli-local/. This is the same workaround the mobile-app path
+// uses; we mirror it here.
+const CLAUDE_CLI_JS_CANDIDATES = [
+  process.env.JARVIS_CLAUDE_CLI_JS,
+  `${process.env.HOME}/.claude-cli-local/node_modules/@anthropic-ai/claude-code/cli.js`,
+].filter((p): p is string => !!p);
+
 export function findClaudeBin(): string {
+  // Prefer the cli.js path — avoids Sequoia SIGKILL on the .exe symlink.
+  for (const p of CLAUDE_CLI_JS_CANDIDATES) if (existsSync(p)) return p;
   for (const p of CANDIDATE_BINS) if (existsSync(p)) return p;
-  throw new Error("claude binary not found; set JARVIS_CLAUDE_BIN");
+  throw new Error("claude binary not found; set JARVIS_CLAUDE_CLI_JS or JARVIS_CLAUDE_BIN");
+}
+
+/** True when the resolved path is a JS file we should run via `node`. */
+export function isClaudeCliJs(path: string): boolean {
+  return path.endsWith("/cli.js") || path.endsWith(".js");
 }
 
 export interface RunningTask {
@@ -43,7 +60,7 @@ export interface RunningTask {
 
 export function runClaudeCode(opts: RunOpts): RunningTask {
   const bin = findClaudeBin();
-  const args = [
+  const claudeArgs = [
     "-p",
     opts.prompt,
     "--output-format",
@@ -53,14 +70,18 @@ export function runClaudeCode(opts: RunOpts): RunningTask {
     // sandboxed workdir Claude Code runs unattended.
     "--dangerously-skip-permissions",
   ];
-  if (opts.resumeSessionId) args.push("--resume", opts.resumeSessionId);
+  if (opts.resumeSessionId) claudeArgs.push("--resume", opts.resumeSessionId);
 
-  const child = spawn(bin, args, {
+  // Sequoia SIGKILL workaround: when the resolved entry is cli.js, run it
+  // via `node` instead of exec'ing the .exe symlink directly.
+  const { cmd, args } = isClaudeCliJs(bin)
+    ? { cmd: "node", args: [bin, ...claudeArgs] }
+    : { cmd: bin, args: claudeArgs };
+
+  const child = spawn(cmd, args, {
     cwd: opts.workdir,
     env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "jarvis-daemon" },
     stdio: ["ignore", "pipe", "pipe"],
-    // own process group so we can kill the whole tree (claude + its Bash/tool
-    // children); killing just the leader leaves shell subprocesses orphaned.
     detached: true,
   });
 
