@@ -171,15 +171,15 @@ export function useJarvis(state: PhoneState) {
   // ----- session switch -----
   const selectAgent = (id: string) => {
     useSessionStore.getState().setAgent(id);
-    // requestAgentHistory lands on JarvisClient when Phase 15 ports the
-    // feature/paseo-pixel-perfect protocol additions. Until then cast any.
-    (client.current as any)?.requestAgentHistory?.(id, 50);
+    // No main-branch payload for history fetch — submit a slash command
+    // so the daemon has a chance to dump history when it upgrades.
+    client.current?.submitCommand(`/history ${id} 50`);
   };
 
   // ----- workspace ops (stub until daemon protocol confirms shape) -----
   const switchWorkspace = (name: string) => {
     useWorkspaceStore.getState().setWorkspaceActive(name);
-    (client.current as any)?.switchWorkspace?.(name);
+    client.current?.submitCommand(`/workspace.switch ${name}`);
   };
 
   // ----- create project (AddProjectSheet Create button) -----
@@ -194,14 +194,12 @@ export function useJarvis(state: PhoneState) {
     if (!trimmed) return;
     useWorkspaceStore.getState().addWorkspace(trimmed);
     useWorkspaceStore.getState().setWorkspaceActive(trimmed);
-    (client.current as any)?.setWorkspaceConfig?.({
-      name: trimmed,
-      spawnMode: cfg.spawnMode,
-      engine: cfg.engine,
-      tmuxTarget: cfg.tmuxTarget ?? "",
-    });
-    // Kick off the agent so the daemon records the workspace
-    (client.current as any)?.submitCommand?.(`init project: ${trimmed}`);
+    // Daemon: best-effort — submit a slash command so the daemon has a
+    // record of the create intent. Future daemon upgrades will parse
+    // /workspace.create and spawn the agent with the chosen engine/mode.
+    client.current?.submitCommand(
+      `/workspace.create ${trimmed} ${cfg.engine} ${cfg.spawnMode}`.trim(),
+    );
     useSessionStore.getState().pushLine({
       kind: "system",
       text: `Created project "${trimmed}"`,
@@ -209,16 +207,26 @@ export function useJarvis(state: PhoneState) {
   };
 
   // ----- agent rename / delete (ProjectContextMenu) -----
+  // Note: main-branch protocol does NOT yet carry agent.rename / workspace.*
+  // payloads (only cmd.submit / task.* / voice.* / pair.*). So these methods
+  // update local stores immediately for visual feedback, AND wrap the action
+  // as a slash command via submitCommand so the daemon can at least log it
+  // and (future daemon upgrade) parse + execute. Local-first keeps the UX
+  // responsive even when the daemon doesn't yet understand.
   const renameAgent = (id: string, name: string) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    useWorkspaceStore.getState().upsertAgent({ id, title: trimmed, status: "idle" });
-    (client.current as any)?.agentRename?.(id, trimmed);
+    // Local: rename workspace + propagate to agents belonging to it
+    useWorkspaceStore.getState().renameWorkspace(id, trimmed);
+    // Daemon: best-effort slash command (daemon may not yet parse /rename)
+    client.current?.submitCommand(`/rename ${id} ${trimmed}`);
   };
 
   const deleteAgent = (id: string) => {
-    useWorkspaceStore.getState().removeAgent(id);
-    (client.current as any)?.deleteAgent?.(id);
+    // Local: remove workspace + its agents
+    useWorkspaceStore.getState().removeWorkspace(id);
+    // Daemon: best-effort slash command
+    client.current?.submitCommand(`/delete ${id}`);
     // If the deleted agent was selected, drop the selection so the chat
     // surface clears on next render.
     const cur = useSessionStore.getState().currentAgentId;
@@ -227,7 +235,8 @@ export function useJarvis(state: PhoneState) {
 
   // ----- provider/model/mode apply (ProviderPicker Apply button) -----
   // Persists the selection so it survives app restart, then notifies the
-  // daemon (best-effort — daemon may not yet expose provider.switch).
+  // daemon via submitCommand (best-effort — main-branch protocol has no
+  // provider.switch payload; daemon may parse /provider.set if upgraded).
   const applyProvider = (
     provider: string,
     model: string,
@@ -241,7 +250,7 @@ export function useJarvis(state: PhoneState) {
     };
     useSettingsStore.setState({ settings: next });
     void saveSettings(next);
-    (client.current as any)?.switchProvider?.(provider, model, mode);
+    client.current?.submitCommand(`/provider.set ${provider} ${model} ${mode}`);
   };
 
   return {

@@ -35,6 +35,8 @@ interface WorkspaceState {
   upsertAgent: (a: Agent) => void;
   removeAgent: (id: string) => void;
   addWorkspace: (name: string) => void;  // dedupes
+  renameWorkspace: (oldName: string, newName: string) => void;
+  removeWorkspace: (name: string) => void;
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
@@ -59,4 +61,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
         ? s
         : { workspaceList: [...s.workspaceList, name] },
     ),
+  renameWorkspace: (oldName, newName) =>
+    set((s) => {
+      if (!s.workspaceList.includes(oldName) || s.workspaceList.includes(newName)) return s;
+      return {
+        workspaceList: s.workspaceList.map((w) => (w === oldName ? newName : w)),
+        workspaceActive: s.workspaceActive === oldName ? newName : s.workspaceActive,
+        agents: s.agents.map((a) => (a.workspace === oldName ? { ...a, workspace: newName } : a)),
+      };
+    }),
+  removeWorkspace: (name) =>
+    set((s) => ({
+      workspaceList: s.workspaceList.filter((w) => w !== name),
+      workspaceActive: s.workspaceActive === name ? "" : s.workspaceActive,
+      agents: s.agents.filter((a) => a.workspace !== name),
+    })),
 }));
