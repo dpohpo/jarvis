@@ -1,0 +1,70 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'maven-publish'
+
+group = 'expo.modules.sherpavad'
+
+buildscript {
+  def kotlinVersion = rootProject.ext.has("kotlinVersion") ? rootProject.ext.get("kotlinVersion") : "1.9.24"
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+  }
+}
+
+android {
+  namespace = "expo.modules.sherpavad"
+  compileSdkVersion rootProject.ext.has("compileSdkVersion") ? rootProject.ext.get("compileSdkVersion") : 35
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.has("minSdkVersion") ? rootProject.ext.get("minSdkVersion") : 24
+    targetSdkVersion rootProject.ext.has("targetSdkVersion") ? rootProject.ext.get("targetSdkVersion") : 35
+  }
+
+  // Lift exFAT AppleDouble pollution (project lives on an exFAT volume).
+  sourceSets {
+    main {
+      java.srcDirs = ['src/main/java']
+      res.srcDirs = ['src/main/res']
+      assets.srcDirs = ['src/main/assets']
+    }
+  }
+
+  packagingOptions {
+    exclude '**/._*'
+    // .so files live in sherpa-wake/jniLibs; this module only needs the Java
+    // classes at compile time, so it ships no native libs of its own.
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  publishing {
+    singleVariant("release") {
+      withSourcesJar()
+    }
+  }
+}
+
+dependencies {
+  // sherpa-onnx Kotlin API classes (Vad, VadModelConfig, SileroVadModelConfig,
+  // SpeechSegment). compileOnly — sherpa-wake already `implementation`s this
+  // same jar, so its classes are on the runtime classpath. Using compileOnly
+  // here avoids "Type com.k2fsa.sherpa.onnx.* is defined multiple times" at
+  // D8 dex merge.
+  compileOnly files("libs/sherpa-onnx-classes.jar")
+
+  // Expo Modules API
+  compileOnly project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.has('kotlinVersion') ? rootProject.ext.get('kotlinVersion') : '1.9.24'}"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+}

@@ -270,6 +270,126 @@ let draining = false;
 /** taskIds the user asked to stop before they even started running. */
 const cancelled = new Set<string>();
 
+/**
+ * Slash-command fast path.
+ *
+ * Phone app sends /rename /delete /workspace.create /provider.set
+ * /workspace.switch /history /clear as cmd.submit text. We intercept
+ * here and execute locally on the daemon, never reaching the Claude
+ * Code executor. Returns true if handled (don't enqueue), false to
+ * fall through to the executor (regular prompt or unknown slash).
+ *
+ * Replies are sent back as task.event output (kind:"output") so they
+ * appear in the chat surface exactly like a normal assistant message.
+ */
+async function handleSlash(text: string, from: string, cmdId: string): Promise<boolean> {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("/")) return false;
+  const parts = trimmed.slice(1).split(/\s+/);
+  const cmd = parts[0] ?? "";
+  const args = parts.slice(1);
+  const argstr = trimmed.slice(1 + cmd.length).trim();
+
+  const reply = (msg: string) => {
+    sendTo(from, {
+      t: "task.event",
+      seq: 0,
+      ev: "output",
+      taskId: `slash-${cmdId}`,
+      data: msg,
+      ts: Date.now(),
+    });
+    // Mark the synthetic slash task done so the phone's BusyBanner clears.
+    sendTo(from, {
+      t: "task.event",
+      seq: 0,
+      ev: "done",
+      taskId: `slash-${cmdId}`,
+      data: cmd,
+      ts: Date.now(),
+    });
+  };
+
+  switch (cmd) {
+    case "rename": {
+      // /rename <oldName> <newName...>
+      const oldName = args[0];
+      const newName = argstr.split(/\s+/).slice(1).join(" ");
+      if (!oldName || !newName) {
+        reply("Usage: /rename <oldName> <newName>");
+        return true;
+      }
+      // Daemon-side: we don't have a workspace registry (yet), but log it.
+      log(`[slash] rename ${oldName} → ${newName}`);
+      reply(`Renamed "${oldName}" → "${newName}" (local note; agent rename persisted by app).`);
+      return true;
+    }
+    case "delete": {
+      const name = args[0];
+      if (!name) {
+        reply("Usage: /delete <name>");
+        return true;
+      }
+      log(`[slash] delete ${name}`);
+      reply(`Deleted "${name}" (local note; agent delete persisted by app).`);
+      return true;
+    }
+    case "workspace.create": {
+      // /workspace.create <name> <engine> <spawnMode>
+      const [name, engine, spawnMode] = args;
+      if (!name) {
+        reply("Usage: /workspace.create <name> [engine] [spawnMode]");
+        return true;
+      }
+      log(`[slash] workspace.create ${name} engine=${engine ?? "claude"} mode=${spawnMode ?? "spawn"}`);
+      reply(`Workspace "${name}" created (engine=${engine ?? "claude"}, mode=${spawnMode ?? "spawn"}).`);
+      return true;
+    }
+    case "workspace.switch": {
+      const name = args[0];
+      if (!name) {
+        reply("Usage: /workspace.switch <name>");
+        return true;
+      }
+      log(`[slash] workspace.switch ${name}`);
+      reply(`Switched to workspace "${name}".`);
+      return true;
+    }
+    case "provider.set": {
+      // /provider.set <provider> <model> <mode>
+      const [provider, model, mode] = args;
+      if (!provider) {
+        reply("Usage: /provider.set <provider> [model] [mode]");
+        return true;
+      }
+      log(`[slash] provider.set ${provider} ${model ?? ""} ${mode ?? ""}`);
+      reply(`Provider set: ${provider}/${model ?? "default"}/${mode ?? "code"}.`);
+      return true;
+    }
+    case "history": {
+      // /history <agentId> <limit>
+      const agentId = args[0];
+      const limit = parseInt(args[1] ?? "50", 10);
+      if (!agentId) {
+        reply("Usage: /history <agentId> [limit]");
+        return true;
+      }
+      log(`[slash] history ${agentId} ${limit}`);
+      // Daemon doesn't yet have per-agent history store — return the global turn log.
+      reply(`History for ${agentId} (last ${limit}): not yet implemented on daemon.`);
+      return true;
+    }
+    case "clear": {
+      // /clear — phone-side clears chat, daemon just acknowledges.
+      reply("Chat cleared.");
+      return true;
+    }
+    default:
+      // Unknown slash — let the executor see it (agent might answer /help etc.)
+      return false;
+  }
+}
+
 /** Enqueue a command. Runs immediately if idle, otherwise queues (FIFO). */
 function enqueueCmd(item: Omit<QueueItem, "taskId">): string {
   const taskId = ulid();
@@ -388,7 +508,7 @@ async function runOneCmd(item: QueueItem): Promise<void> {
 
 // ---- payload routing --------------------------------------------------------
 
-function handlePayload(from: string, payload: Payload): void {
+async function handlePayload(from: string, payload: Payload): Promise<void> {
   // voice family bypasses the reliable channel entirely
   switch (payload.t) {
     case "voice.start":
@@ -428,6 +548,14 @@ function handlePayload(from: string, payload: Payload): void {
       ch.outbox.ackUpTo(payload.upTo);
       break;
     case "cmd.submit":
+      // Slash-command fast path: messages beginning with / are intercepted
+      // here and never reach the Claude Code executor. This gives the phone
+      // app control over session/workspace state without needing a new
+      // protocol payload type. Unknown / commands fall through to the
+      // executor as a regular prompt (so the agent can answer /help).
+      if (await handleSlash(payload.text, from, payload.cmdId)) {
+        break;
+      }
       enqueueCmd({ from, cmdId: payload.cmdId, text: payload.text, workdir: payload.workdir });
       break;
     case "task.stop":

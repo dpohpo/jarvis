@@ -1,0 +1,68 @@
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+apply plugin: 'maven-publish'
+
+group = 'expo.modules.sherpawake'
+
+buildscript {
+  def kotlinVersion = rootProject.ext.has("kotlinVersion") ? rootProject.ext.get("kotlinVersion") : "1.9.24"
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
+  }
+}
+
+android {
+  namespace = "expo.modules.sherpawake"
+  compileSdkVersion rootProject.ext.has("compileSdkVersion") ? rootProject.ext.get("compileSdkVersion") : 35
+
+  defaultConfig {
+    minSdkVersion rootProject.ext.has("minSdkVersion") ? rootProject.ext.get("minSdkVersion") : 24
+    targetSdkVersion rootProject.ext.has("targetSdkVersion") ? rootProject.ext.get("targetSdkVersion") : 35
+  }
+
+  // Lift exFAT AppleDouble pollution (project lives on an exFAT volume).
+  sourceSets {
+    main {
+      java.srcDirs = ['src/main/java']
+      res.srcDirs = ['src/main/res']
+      assets.srcDirs = ['src/main/assets']
+    }
+  }
+
+  packagingOptions {
+    exclude '**/._*'
+  }
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_17
+    targetCompatibility JavaVersion.VERSION_17
+  }
+
+  kotlinOptions {
+    jvmTarget = "17"
+  }
+
+  publishing {
+    singleVariant("release") {
+      withSourcesJar()
+    }
+  }
+}
+
+dependencies {
+  // sherpa-onnx Kotlin API classes (KeywordSpotter, OnlineStream, JNI bindings).
+  // Extracted from the v1.13.2 AAR — Android Gradle Plugin refuses to package
+  // local .aar deps inside another AAR, so we extract classes.jar + jniLibs/
+  // directly into this module. Native .so files in src/main/jniLibs/ are picked
+  // up automatically; assets under src/main/assets/ merge into the host app.
+  implementation files("libs/sherpa-onnx-classes.jar")
+
+  // Expo Modules API
+  compileOnly project(':expo-modules-core')
+  implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:${rootProject.ext.has('kotlinVersion') ? rootProject.ext.get('kotlinVersion') : '1.9.24'}"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+}

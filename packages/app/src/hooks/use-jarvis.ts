@@ -15,6 +15,7 @@ import { PermissionsAndroid, Platform } from "react-native";
 import type { PermRequest, TaskEvent } from "@jarvis/protocol";
 import { JarvisClient } from "../client";
 import { playTtsWav, startCapture, stopCapture } from "../voice";
+import { initWake, startListening, destroyWake } from "../wakeword";
 import type { PhoneState } from "../store";
 import { useSessionStore } from "../stores/session-store";
 import { useWorkspaceStore, type Agent, type AgentStatus } from "../stores/workspace-store";
@@ -129,6 +130,30 @@ export function useJarvis(state: PhoneState) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkUp]);
+
+  // Wake-word auto-init. SherpaWake needs no AccessKey (offline model
+  // bundled in modules/sherpa-wake/android/src/main/assets/). When the
+  // user has settings.autoWake=true, we initialize on first link-up and
+  // start listening. On wake, we kick the same autoListen chain that
+  // VAD auto-mode uses, so the user can say "Jarvis" → speak prompt →
+  // hear TTS → "Jarvis" → speak again, fully hands-free.
+  useEffect(() => {
+    if (!settings.autoWake || !linkUp) return;
+    let cancelled = false;
+    void (async () => {
+      // SherpaWake signature is initWake(onWake) — no AccessKey needed.
+      const ok = await initWake(() => {
+        void autoListen();
+      });
+      if (cancelled) return;
+      if (ok) await startListening();
+    })();
+    return () => {
+      cancelled = true;
+      void destroyWake();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.autoWake, linkUp]);
 
   // ----- submit -----
   const submit = (text: string) => {
