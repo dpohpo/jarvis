@@ -1,13 +1,14 @@
 /**
- * Babel config — v2-from-scratch.
+ * Babel config — v2-from-scratch (Phase 15 simplified).
  *
- * react-native-reanimated 4.x ships its own compiler pass via metro
- * (no app-side babel plugin needed). The babel-preset-expo auto-includes
- * the legacy reanimated/plugin, which crashes on reanimated 4 sources
- * ("Cannot read properties of undefined (reading 'length')"). We
- * explicitly drop the plugin from the inherit list to avoid the crash.
+ * Previous attempt added "react-native-reanimated": false to disable
+ * the legacy plugin path; that key isn't a real babel-preset-expo
+ * option and silently broke the preset (caused metro's
+ * `Cannot read properties of undefined (reading 'transformFile')`
+ * during export:embed).
  *
- * unstable_transformImportMeta: required by Zustand 5 (uses import.meta.env).
+ * unstable_transformImportMeta: required by Zustand 5 (uses
+ * import.meta.env).
  */
 module.exports = function (api) {
   api.cache(true);
@@ -17,7 +18,6 @@ module.exports = function (api) {
         "babel-preset-expo",
         {
           unstable_transformImportMeta: true,
-          "react-native-reanimated": false, // disable legacy plugin path
         },
       ],
     ],
