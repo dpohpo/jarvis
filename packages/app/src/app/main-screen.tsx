@@ -12,6 +12,7 @@ import { StyleSheet, View } from "react-native";
 import { TopBar } from "../components/top-bar";
 import { LeftSidebar } from "../components/left-sidebar";
 import { EmptyMain } from "../components/empty-main";
+import { ChatSurface } from "../components/chat-surface";
 import { AddProjectSheet } from "../components/add-project-sheet";
 import { AgentStatusPopover } from "../components/agent-status-popover";
 import { TopMenu } from "../components/top-menu";
@@ -37,8 +38,7 @@ export function MainScreen({ state }: Props) {
       <TopBar />
       <View style={styles.body}>
         {hasProjects ? (
-          // Phase 11 will mount <ChatSurface /> here.
-          <View />
+          <ChatSurface />
         ) : (
           <EmptyMain />
         )}
