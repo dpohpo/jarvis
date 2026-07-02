@@ -1,9 +1,5 @@
 /**
- * ErrorBubble — left-aligned, red left bar, surface1 fill.
- *
- * Used for task errors and infrastructure failures (ASR unreachable,
- * daemon disconnect, permission denied). Mirrors ToolUseBlock layout
- * but with C.destructive accent.
+ * ErrorBubble — red-left-bar error message.
  */
 import { StyleSheet, Text, View, ViewStyle } from "react-native";
 import { C, FS, RD, SP } from "../../theme";
@@ -20,23 +16,15 @@ export function ErrorBubble({ bubble }: { bubble: Bubble }) {
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    justifyContent: "flex-start",
-    marginVertical: 2,
-  } as ViewStyle,
+  row: { flexDirection: "row", justifyContent: "flex-start", marginVertical: 2 } as ViewStyle,
   bubble: {
     backgroundColor: C.surface1,
     borderRadius: RD.md,
-    paddingHorizontal: SP[2],
-    paddingVertical: SP[1],
     borderLeftWidth: 2,
     borderLeftColor: C.destructive,
+    paddingHorizontal: SP[2],
+    paddingVertical: SP[1],
     maxWidth: "88%",
   } as ViewStyle,
-  text: {
-    color: C.destructive,
-    fontSize: FS.xs,
-    fontFamily: "Menlo",
-  },
+  text: { color: C.destructive, fontSize: FS.xs, fontFamily: "Menlo" },
 });

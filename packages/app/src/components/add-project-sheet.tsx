@@ -1,20 +1,7 @@
 /**
- * AddProjectSheet — screenshot 2.1.jpg.
+ * AddProjectSheet — 2.1.jpg bottom sheet.
  *
- * Bottom sheet that opens when user taps the + button on EmptyMain.
- * Collects:
- *  - project name (text input)
- *  - spawn mode (spawn | tmux, radio)
- *  - engine (claude | codex | copilot | gemini, chips)
- *  - tmux pane target (optional, shown only when spawn mode = tmux)
- *
- * Create button calls (Phase 14 wires):
- *  client.setWorkspaceConfig({ ... }) + client.createAgent / submitCommand
- *
- * Phase 10 ships UI + local state + the create handler shell. The shell
- * writes defaults to settings-store + creates a placeholder project row
- * in workspace-store so the user sees immediate feedback even before
- * the daemon confirms.
+ * Black "Create" button + black selected segments.
  */
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View, ViewStyle } from "react-native";
@@ -29,7 +16,7 @@ const ENGINES: Provider[] = ["claude", "codex", "copilot", "gemini"];
 export function AddProjectSheet() {
   const visible = useUiStore((s) => s.addProjectOpen);
   const setVisible = useUiStore((s) => s.setAddProjectOpen);
-  const addWorkspace = useWorkspaceStore((s) => s.setWorkspaceList);
+  const setWorkspaceList = useWorkspaceStore((s) => s.setWorkspaceList);
   const existing = useWorkspaceStore((s) => s.workspaceList);
   const setWorkspaceActive = useWorkspaceStore((s) => s.setWorkspaceActive);
   const settings = useSettingsStore((s) => s.settings);
@@ -48,13 +35,8 @@ export function AddProjectSheet() {
   const create = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    if (!existing.includes(trimmed)) {
-      addWorkspace([...existing, trimmed]);
-    }
+    if (!existing.includes(trimmed)) setWorkspaceList([...existing, trimmed]);
     setWorkspaceActive(trimmed);
-    // Phase 14 will additionally call:
-    //   client.setWorkspaceConfig({ mode: spawnMode, engine, tmuxPane })
-    //   client.submitCommand(...) to spawn the agent
     close();
   };
 
@@ -67,8 +49,8 @@ export function AddProjectSheet() {
         style={styles.input}
         value={name}
         onChangeText={setName}
-        placeholder="e.g. jarvis-android"
-        placeholderTextColor={C.fgSubtle}
+        placeholder="e.g. paseo-android"
+        placeholderTextColor={C.fgFaint}
         autoCapitalize="none"
         autoCorrect={false}
         autoFocus
@@ -97,9 +79,7 @@ export function AddProjectSheet() {
             style={[styles.chip, engine === e && styles.chipActive]}
             onPress={() => setEngine(e)}
           >
-            <Text style={[styles.chipText, engine === e && styles.chipTextActive]}>
-              {e}
-            </Text>
+            <Text style={[styles.chipText, engine === e && styles.chipTextActive]}>{e}</Text>
           </Pressable>
         ))}
       </View>
@@ -112,7 +92,7 @@ export function AddProjectSheet() {
             value={tmuxPane}
             onChangeText={setTmuxPane}
             placeholder="e.g. main:0.1"
-            placeholderTextColor={C.fgSubtle}
+            placeholderTextColor={C.fgFaint}
             autoCapitalize="none"
             autoCorrect={false}
           />
@@ -137,39 +117,30 @@ export function AddProjectSheet() {
 
 const styles = StyleSheet.create({
   title: { color: C.fg, fontSize: FS.lg, fontWeight: FW.semibold, marginBottom: SP[3] },
-  label: {
-    color: C.fgSubtle, fontSize: FS.xs, fontWeight: FW.semibold,
-    letterSpacing: 1, marginTop: SP[3], marginBottom: SP[1],
-  },
+  label: { color: C.fgSubtle, fontSize: FS.xs, fontWeight: FW.semibold, marginTop: SP[3], marginBottom: SP[1] },
   input: {
-    backgroundColor: C.surface1,
-    color: C.fg,
-    borderRadius: RD.md,
-    paddingHorizontal: SP[3],
-    paddingVertical: SP[2],
+    backgroundColor: C.surface1, color: C.fg,
+    borderRadius: RD.md, paddingHorizontal: SP[3], paddingVertical: SP[2],
     fontSize: FS.sm,
   },
   segmentedRow: { flexDirection: "row", gap: SP[1], backgroundColor: C.surface1, borderRadius: RD.md, padding: 2 },
   segment: { flex: 1, paddingVertical: SP[2], borderRadius: RD.sm, alignItems: "center" },
-  segmentActive: { backgroundColor: C.accent },
-  segmentText: { color: C.fgMuted, fontSize: FS.sm },
-  segmentTextActive: { color: C.accentForeground, fontWeight: FW.semibold },
+  segmentActive: { backgroundColor: C.btnPrimary } as ViewStyle, // BLACK
+  segmentText: { color: C.fgSubtle, fontSize: FS.sm },
+  segmentTextActive: { color: C.btnPrimaryFg, fontWeight: FW.semibold },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: SP[1] },
   chip: {
-    paddingHorizontal: SP[3],
-    paddingVertical: SP[1],
-    borderRadius: RD.full,
-    backgroundColor: C.surface1,
-    borderWidth: 1,
-    borderColor: C.borderSubtle,
+    paddingHorizontal: SP[3], paddingVertical: SP[1],
+    borderRadius: 9999, backgroundColor: C.surface1,
+    borderWidth: 1, borderColor: C.borderSubtle,
   } as ViewStyle,
-  chipActive: { backgroundColor: C.accentDim, borderColor: C.accent } as ViewStyle,
-  chipText: { color: C.fgMuted, fontSize: FS.sm },
-  chipTextActive: { color: C.accentBright, fontWeight: FW.semibold },
+  chipActive: { borderColor: C.fg } as ViewStyle,
+  chipText: { color: C.fgSubtle, fontSize: FS.sm },
+  chipTextActive: { color: C.fg, fontWeight: FW.semibold },
   actionRow: { flexDirection: "row", gap: SP[2], marginTop: SP[5] },
   btn: { paddingVertical: SP[3], borderRadius: RD.lg, alignItems: "center", justifyContent: "center" } as ViewStyle,
-  btnPrimary: { backgroundColor: C.accent } as ViewStyle,
-  btnPrimaryText: { color: C.accentForeground, fontSize: FS.base, fontWeight: FW.semibold },
+  btnPrimary: { backgroundColor: C.btnPrimary } as ViewStyle, // BLACK
+  btnPrimaryText: { color: C.btnPrimaryFg, fontSize: FS.base, fontWeight: FW.semibold },
   btnSecondary: { backgroundColor: C.surface1 } as ViewStyle,
   btnSecondaryText: { color: C.fgMuted, fontSize: FS.base },
   btnDisabled: { opacity: 0.4 } as ViewStyle,

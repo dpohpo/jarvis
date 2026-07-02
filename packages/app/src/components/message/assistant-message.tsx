@@ -1,14 +1,11 @@
 /**
- * AssistantMessage — left-aligned surface bubble.
+ * AssistantMessage — 3.jpg assistant bubble.
  *
- * 3.jpg assistant row: grey fill (C.surface2), multi-line text.
+ * Sampled: #F4F4F4 fill (surface1), dark text, max-width ~88%, 18dp radius
+ * with the top-left corner pulled in.
  *
- * Originally used react-native-markdown-display (Phase 11), but
- * markdown-it@10 pulls in punycode which RN's metro doesn't ship.
- * Phase 15 dropped the dep and renders plain text — code blocks /
- * lists in the text come through unstyled but readable. A future
- * phase can swap in `marked` + custom render or a maintained RN
- * markdown lib once one is compatible with RN 0.85 / Expo 56.
+ * Plain text rendering (markdown lib incompatible with RN 0.85 — see
+ * visual-spec.md). Code fences / lists come through unstyled.
  */
 import { StyleSheet, Text, View, ViewStyle } from "react-native";
 import { C, FS, LH, RD, SP } from "../../theme";
@@ -31,12 +28,12 @@ const styles = StyleSheet.create({
     marginVertical: SP[1],
   } as ViewStyle,
   bubble: {
-    backgroundColor: C.surface2,
-    borderRadius: RD["2xl"],
+    backgroundColor: C.surface1, // #F4F4F4
+    borderRadius: RD.xl,
     borderTopLeftRadius: RD.sm,
     paddingHorizontal: SP[3],
     paddingVertical: SP[2],
-    maxWidth: "92%",
+    maxWidth: "90%",
   } as ViewStyle,
   text: {
     color: C.fg,
@@ -44,4 +41,3 @@ const styles = StyleSheet.create({
     lineHeight: Math.round(FS.sm * LH.relaxed),
   },
 });
-

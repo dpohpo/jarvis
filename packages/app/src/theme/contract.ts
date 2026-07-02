@@ -1,17 +1,9 @@
 /**
- * Contract — runtime assertions on the screenshot-extracted tokens.
+ * Contract — runtime assertions on the pixel-sampled tokens.
  *
- * Why a plain TS contract instead of a jest snapshot:
- *  - jarvis app has no test runner (test script is `echo 'manual: on-device'`)
- *  - installing jest/vitest just for 8 numeric assertions pulls in 200+ deps
- *  - the values are stable (screenshot-extracted) and never change at runtime
- *
- * Importing this module runs the assertions once (guard against accidental
- * token drift). If any assertion fails, the import throws with a clear
- * message naming the offending token.
- *
- * Phase 15装机验证: visual diff against the 14 screenshots is the real
- * snapshot — this contract just stops typos from shipping.
+ * Locks the values sampled via Python PIL on the 14 screenshots.
+ * If any value drifts, importing this module throws. Run on app boot
+ * to fail fast on accidental palette regressions.
  */
 import { C } from "./tokens";
 import { SP } from "./spacing";
@@ -20,37 +12,47 @@ import { RD } from "./radius";
 
 type Spec = { name: string; got: unknown; want: unknown };
 const specs: Spec[] = [
-  // Accent — vibrant purple
-  { name: "C.accent", got: C.accent, want: "#B3A1FF" },
-  { name: "C.accentBright", got: C.accentBright, want: "#D4C5FF" },
-  { name: "C.accentDim", got: C.accentDim, want: "#3D2E70" },
-  { name: "C.accentForeground", got: C.accentForeground, want: "#1A1A1F" },
+  // Backgrounds — LIGHT theme, NOT dark
+  { name: "C.bg", got: C.bg, want: "#FFFFFF" },
+  { name: "C.surface1", got: C.surface1, want: "#F4F4F4" },
+  { name: "C.surface2", got: C.surface2, want: "#EBEBEB" },
+  { name: "C.surface3", got: C.surface3, want: "#E0E0E0" },
 
-  // Canvas — warm dark, NOT paseo teal-green
-  { name: "C.bg", got: C.bg, want: "#1A1A1F" },
-  { name: "C.surfaceSidebar", got: C.surfaceSidebar, want: "#161619" },
+  // Foreground — DARK text on LIGHT bg
+  { name: "C.fg", got: C.fg, want: "#181818" },
+  { name: "C.fgMuted", got: C.fgMuted, want: "#404040" },
+  { name: "C.fgSubtle", got: C.fgSubtle, want: "#707070" },
+  { name: "C.fgFaint", got: C.fgFaint, want: "#A0A0A0" },
 
-  // 3-layer surface progression
-  { name: "C.surface1", got: C.surface1, want: "#232329" },
-  { name: "C.surface2", got: C.surface2, want: "#2D2D35" },
-  { name: "C.surface3", got: C.surface3, want: "#3A3A44" },
+  // Accent — paseo DARK GREEN (was hallucinated as purple #B3A1FF)
+  { name: "C.accent", got: C.accent, want: "#307040" },
+  { name: "C.accentHover", got: C.accentHover, want: "#3B6C4D" },
+  { name: "C.accentDim", got: C.accentDim, want: "#4F8E5C" },
 
-  // Status palette (8.jpg sidebar dots)
-  { name: "C.statusOnline", got: C.statusOnline, want: "#4ADE80" },
-  { name: "C.statusBusy", got: C.statusBusy, want: "#FBBF24" },
-  { name: "C.statusError", got: C.statusError, want: "#F87171" },
+  // Primary button — BLACK (not accent)
+  { name: "C.btnPrimary", got: C.btnPrimary, want: "#101010" },
+  { name: "C.btnPrimaryFg", got: C.btnPrimaryFg, want: "#FFFFFF" },
 
-  // Spacing scale
+  // Status
+  { name: "C.statusOnline", got: C.statusOnline, want: "#3B6C4D" },
+  { name: "C.statusBusy", got: C.statusBusy, want: "#D97706" },
+  { name: "C.statusError", got: C.statusError, want: "#DC2626" },
+
+  // Borders
+  { name: "C.border", got: C.border, want: "#E0E0E0" },
+  { name: "C.borderSubtle", got: C.borderSubtle, want: "#F0F0F0" },
+
+  // Spacing
   { name: "SP[0]", got: SP[0], want: 0 },
   { name: "SP[1]", got: SP[1], want: 4 },
   { name: "SP[6]", got: SP[6], want: 24 },
   { name: "SP[12] (login logo)", got: SP[12], want: 96 },
 
-  // Typography — login title 32 bold
+  // Typography
   { name: "FS.3xl (login title)", got: FS["3xl"], want: 32 },
   { name: "FW.bold", got: FW.bold, want: "700" },
 
-  // Radius — composer/bubble 24
+  // Radius
   { name: "RD.2xl (bubble)", got: RD["2xl"], want: 24 },
   { name: "RD.full (pill)", got: RD.full, want: 9999 },
 
@@ -67,7 +69,7 @@ if (failures.length > 0) {
     .map((s) => `  ${s.name}: got ${JSON.stringify(s.got)}, want ${JSON.stringify(s.want)}`)
     .join("\n");
   throw new Error(
-    `[theme/contract] token drift detected — re-verify against ~/Desktop/jarvis ui/:\n${msg}`,
+    `[theme/contract] token drift detected — see visual-spec.md:\n${msg}`,
   );
 }
 

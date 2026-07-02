@@ -1,9 +1,7 @@
 /**
- * PermissionModal — wired to ui-store.permRequest.
- *
- * 3.5.jpg-style approval card. When client.onPermRequest fires, the
- * hook writes the request into ui-store and this modal mounts. User
- * taps 批准 / 拒绝 → useJarvis.respondPermission(reqId, allow).
+ * PermissionModal — approval card.
+ * Approve = BLACK button + white text.
+ * Deny = surface button + destructive text.
  */
 import { Modal, Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
 import { C, FS, FW, RD, SP } from "../theme";
@@ -19,7 +17,7 @@ export function PermissionModal({ onRespond }: Props) {
     <Modal visible={perm !== null} transparent animationType="fade" onRequestClose={() => perm && onRespond(perm.reqId, false)}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
-          <Text style={styles.title}>🔐 Tier {perm?.tier} 操作审批</Text>
+          <Text style={styles.title}>Tier {perm?.tier} approval</Text>
           <Text style={styles.summary}>{perm?.summary}</Text>
           <Text style={styles.detail}>{perm?.detail}</Text>
           <View style={styles.row}>
@@ -27,13 +25,13 @@ export function PermissionModal({ onRespond }: Props) {
               style={[styles.btn, styles.btnDeny]}
               onPress={() => perm && onRespond(perm.reqId, false)}
             >
-              <Text style={styles.btnDenyText}>拒绝</Text>
+              <Text style={styles.btnDenyText}>Deny</Text>
             </Pressable>
             <Pressable
               style={[styles.btn, styles.btnApprove]}
               onPress={() => perm && onRespond(perm.reqId, true)}
             >
-              <Text style={styles.btnApproveText}>批准</Text>
+              <Text style={styles.btnApproveText}>Approve</Text>
             </Pressable>
           </View>
         </View>
@@ -51,7 +49,7 @@ const styles = StyleSheet.create({
     padding: SP[5],
   } as ViewStyle,
   card: {
-    backgroundColor: C.surface2,
+    backgroundColor: C.bg,
     borderRadius: RD.xl,
     padding: SP[4],
     width: "100%",
@@ -62,7 +60,7 @@ const styles = StyleSheet.create({
   row: { flexDirection: "row", gap: SP[2], marginTop: SP[4] } as ViewStyle,
   btn: { flex: 1, paddingVertical: SP[3], borderRadius: RD.lg, alignItems: "center" } as ViewStyle,
   btnDeny: { backgroundColor: C.surface1 } as ViewStyle,
-  btnApprove: { backgroundColor: C.accent } as ViewStyle,
+  btnApprove: { backgroundColor: C.btnPrimary } as ViewStyle, // BLACK
   btnDenyText: { color: C.destructive, fontSize: FS.base, fontWeight: FW.semibold },
-  btnApproveText: { color: C.accentForeground, fontSize: FS.base, fontWeight: FW.semibold },
+  btnApproveText: { color: C.btnPrimaryFg, fontSize: FS.base, fontWeight: FW.semibold },
 });

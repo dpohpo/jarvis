@@ -1,22 +1,17 @@
 /**
- * LeftSidebar — screenshot 8.jpg.
+ * LeftSidebar — 8.jpg pixel-perfect.
  *
- * Drawer content. Visible when ui-store.drawerOpen === true.
- *
- * Layout (top → bottom):
- *  Host picker      — status dot (linkUp color) + host name + ▾
- *  PROJECTS header  — uppercase, subtle text
- *  Project rows     — folder icon + name + (active row has surface1 fill)
- *                     each row has trailing ⋯ button (8.1.jpg)
- *  SESSIONS header
- *  Session rows     — status dot + title
- *  Footer           — 4 icon buttons (Sessions / New / Settings / Home)
- *
- * Host name comes from PhoneState.daemonDeviceId (passed via prop).
- * Workspace/agent lists come from workspace-store (Phase 14 fills them
- * with live data; for now they render empty-state hints).
+ * Sampled:
+ *  - sidebar bg #F4F4F4
+ *  - host picker row: status dot + name + chevron
+ *  - PROJECTS section header: #707070 uppercase 11pt
+ *  - project rows: folder icon + name + active row #E0E0E0 fill
+ *  - SESSIONS section header
+ *  - session rows: status dot + title (#404040)
+ *  - footer: 4 icon buttons (#707070 glyphs)
  */
 import { Pressable, ScrollView, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { ChevronDown, Folder, History, Home, Plus, Settings as SettingsIcon } from "lucide-react-native";
 import { C, FS, FW, RD, SP, LS } from "../theme";
 import { useUiStore } from "../stores/ui-store";
 import { useWorkspaceStore, type Agent, type AgentStatus } from "../stores/workspace-store";
@@ -28,7 +23,7 @@ const STATUS_DOT: Record<AgentStatus, string> = {
   error: C.statusError,
   needs_input: C.statusBusy,
   attention: C.statusBusy,
-  idle: C.fgSubtle,
+  idle: C.statusIdle,
 };
 
 interface Props {
@@ -47,38 +42,35 @@ export function LeftSidebar({ hostName, linkUp, onHome }: Props) {
   const workspaceList = useWorkspaceStore((s) => s.workspaceList);
   const agents = useWorkspaceStore((s) => s.agents);
   const setWorkspaceActive = useWorkspaceStore((s) => s.setWorkspaceActive);
-  const setAgent = useWorkspaceStore((s) => s); // for actions we need store actions
-  void setAgent; // placeholder until Phase 14 wires setCurrentAgent action
 
   return (
     <View style={styles.root}>
-      {/* Host picker */}
       <View style={styles.hostRow}>
-        <View style={[styles.dot, { backgroundColor: linkUp ? C.statusOnline : C.fgSubtle }]} />
+        <View style={[styles.dot, { backgroundColor: linkUp ? C.statusOnline : C.statusIdle }]} />
         <Text style={styles.hostName} numberOfLines={1}>{hostName}</Text>
-        <Text style={styles.hostChevron}>▾</Text>
+        <ChevronDown size={14} color={C.fgSubtle} />
       </View>
 
       <ScrollView style={styles.scroll} contentContainerStyle={{ paddingBottom: SP[3] }}>
-        {/* Projects */}
         <Text style={styles.sectionHeader}>PROJECTS</Text>
         {workspaceList.length === 0 ? (
           <Text style={styles.emptyHint}>No projects yet</Text>
         ) : (
           workspaceList.map((ws) => (
-            <ProjectRow
+            <Pressable
               key={ws}
-              name={ws}
-              active={workspaceActive === ws}
               onPress={() => {
                 setWorkspaceActive(ws);
                 setDrawerOpen(false);
               }}
-            />
+              style={[styles.wsRow, workspaceActive === ws && styles.wsRowActive]}
+            >
+              <Folder size={14} color={C.fgMuted} />
+              <Text style={styles.wsName} numberOfLines={1}>{ws}</Text>
+            </Pressable>
           ))
         )}
 
-        {/* Sessions */}
         <Text style={[styles.sectionHeader, { marginTop: SP[4] }]}>SESSIONS</Text>
         {agents.length === 0 ? (
           <Text style={styles.emptyHint}>No sessions yet</Text>
@@ -87,57 +79,31 @@ export function LeftSidebar({ hostName, linkUp, onHome }: Props) {
         )}
       </ScrollView>
 
-      {/* Footer */}
       <View style={styles.footer}>
         <Pressable
           style={styles.footerBtn}
-          onPress={() => {
-            setDrawerOpen(false);
-            setSessionPickerOpen(true);
-          }}
+          onPress={() => { setDrawerOpen(false); setSessionPickerOpen(true); }}
         >
-          <Text style={styles.footerIcon}>⏱</Text>
+          <History size={18} color={C.fgSubtle} />
         </Pressable>
         <Pressable
           style={styles.footerBtn}
-          onPress={() => {
-            setDrawerOpen(false);
-            setAddProjectOpen(true);
-          }}
+          onPress={() => { setDrawerOpen(false); setAddProjectOpen(true); }}
         >
-          <Text style={styles.footerIcon}>＋</Text>
+          <Plus size={18} color={C.fgSubtle} />
         </Pressable>
         <Pressable
           style={styles.footerBtn}
-          onPress={() => {
-            setDrawerOpen(false);
-            setSettingsOpen(true);
-          }}
+          onPress={() => { setDrawerOpen(false); setSettingsOpen(true); }}
         >
-          <Text style={styles.footerIcon}>⚙</Text>
+          <SettingsIcon size={18} color={C.fgSubtle} />
         </Pressable>
         <Pressable style={styles.footerBtn} onPress={() => { setDrawerOpen(false); onHome(); }}>
-          <Text style={styles.footerIcon}>⌂</Text>
+          <Home size={18} color={C.fgSubtle} />
         </Pressable>
       </View>
 
       <ProjectContextMenu />
-    </View>
-  );
-}
-
-function ProjectRow({ name, active, onPress }: { name: string; active: boolean; onPress: () => void }) {
-  const setProjectMenuTarget = useUiStore((s) => s.setAgentStatusOpen); // unused; placeholder
-  void setProjectMenuTarget;
-  return (
-    <View style={[styles.wsRow, active && styles.wsRowActive]}>
-      <Pressable onPress={onPress} style={styles.wsRowPress}>
-        <Text style={styles.wsIcon}>📁</Text>
-        <Text style={styles.wsName} numberOfLines={1}>{name}</Text>
-      </Pressable>
-      <Pressable style={styles.wsMoreBtn}>
-        <Text style={styles.wsMore}>⋯</Text>
-      </Pressable>
     </View>
   );
 }
@@ -152,18 +118,14 @@ function SessionRow({ agent }: { agent: Agent }) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: C.surfaceSidebar },
+  root: { flex: 1, backgroundColor: C.surfaceSidebar } as ViewStyle,
   hostRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingHorizontal: SP[3],
-    paddingVertical: SP[2],
-    gap: SP[2],
-    marginBottom: SP[2],
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: SP[3], paddingVertical: SP[2],
+    gap: SP[2], marginBottom: SP[2],
   } as ViewStyle,
-  dot: { width: 8, height: 8, borderRadius: 9999 },
+  dot: { width: 8, height: 8, borderRadius: 9999 } as ViewStyle,
   hostName: { color: C.fg, fontSize: FS.sm, fontWeight: FW.semibold, flex: 1 },
-  hostChevron: { color: C.fgSubtle, fontSize: 12 },
   scroll: { flex: 1 },
   sectionHeader: {
     color: C.fgSubtle, fontSize: FS.xs, fontWeight: FW.semibold,
@@ -174,38 +136,25 @@ const styles = StyleSheet.create({
     paddingHorizontal: SP[3], paddingVertical: SP[1],
   },
   wsRow: {
-    flexDirection: "row", alignItems: "center",
+    flexDirection: "row", alignItems: "center", gap: SP[2],
+    paddingHorizontal: SP[3], paddingVertical: SP[2],
     marginHorizontal: SP[2], borderRadius: RD.md,
-    paddingRight: SP[1],
   } as ViewStyle,
-  wsRowActive: { backgroundColor: C.surface1 },
-  wsRowPress: {
-    flex: 1,
-    flexDirection: "row", alignItems: "center",
-    paddingHorizontal: SP[2], paddingVertical: SP[2], gap: SP[2],
-  } as ViewStyle,
-  wsIcon: { fontSize: 14 },
+  wsRowActive: { backgroundColor: C.surface3 } as ViewStyle, // #E0E0E0
   wsName: { color: C.fg, fontSize: FS.sm, flex: 1 },
-  wsMoreBtn: { width: 28, height: 28, alignItems: "center", justifyContent: "center", borderRadius: RD.sm },
-  wsMore: { color: C.fgSubtle, fontSize: 16 },
   agentRow: {
     flexDirection: "row", alignItems: "center", gap: SP[2],
     paddingHorizontal: SP[3], paddingVertical: SP[2],
     marginHorizontal: SP[2], borderRadius: RD.md,
   } as ViewStyle,
-  agentDot: { width: 6, height: 6, borderRadius: 9999 },
+  agentDot: { width: 6, height: 6, borderRadius: 9999 } as ViewStyle,
   agentTitle: { color: C.fgMuted, fontSize: FS.sm, flex: 1 },
   footer: {
     flexDirection: "row",
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: C.borderSubtle,
-    paddingTop: SP[2],
-    paddingHorizontal: SP[2],
+    paddingTop: SP[2], paddingHorizontal: SP[2],
     gap: SP[1],
   } as ViewStyle,
-  footerBtn: {
-    width: 38, height: 38, borderRadius: RD.md,
-    alignItems: "center", justifyContent: "center",
-  } as ViewStyle,
-  footerIcon: { color: C.fgMuted, fontSize: 16 },
+  footerBtn: { width: 38, height: 38, borderRadius: RD.md, alignItems: "center", justifyContent: "center" } as ViewStyle,
 });

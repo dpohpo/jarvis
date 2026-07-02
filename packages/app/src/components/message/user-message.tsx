@@ -1,9 +1,8 @@
 /**
- * UserMessage — right-aligned accent bubble.
+ * UserMessage — 3.jpg user bubble.
  *
- * 3.jpg user row: purple fill (C.accent), accentForeground text,
- * border-radius 24 (RD.2xl) overall, with the top-right corner pulled
- * in to 6 (RD.sm) to suggest a speech-tail direction.
+ * Sampled: BLACK fill (#101010), white text, max-width ~80%, 18dp radius
+ * with the top-right corner pulled in (suggests speech direction).
  */
 import { StyleSheet, Text, View, ViewStyle } from "react-native";
 import { C, FS, LH, RD, SP } from "../../theme";
@@ -26,15 +25,15 @@ const styles = StyleSheet.create({
     marginVertical: SP[1],
   } as ViewStyle,
   bubble: {
-    backgroundColor: C.accent,
-    borderRadius: RD["2xl"],
+    backgroundColor: C.btnPrimary, // BLACK #101010
+    borderRadius: RD.xl,
     borderTopRightRadius: RD.sm,
     paddingHorizontal: SP[3],
     paddingVertical: SP[2],
-    maxWidth: "85%",
+    maxWidth: "82%",
   } as ViewStyle,
   text: {
-    color: C.accentForeground,
+    color: C.btnPrimaryFg,
     fontSize: FS.sm,
     lineHeight: Math.round(FS.sm * LH.base),
   },

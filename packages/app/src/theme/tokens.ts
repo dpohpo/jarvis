@@ -1,50 +1,57 @@
 /**
- * Color tokens — extracted from screenshots in ~/Desktop/jarvis ui/
- * (14 reference images, 1.jpg through 8.2.1.1.jpg).
+ * Color tokens — pixel-sampled from screenshots (visual-spec.md, 2026-07-02).
  *
- * Verification: open any screenshot and sample the accent button / surface
- * background; values below match within ±2/255 per channel.
- *
- * Accent is VIBRANT PURPLE #B3A1FF (matching screenshots), NOT paseo's
- * teal-green #20744A palette. The whole v2 UI rides on this single
- * accent — keep its usage restricted to: primary CTA, selected-state
- * borders, model badge fill, user-message bubble fill.
+ * CRITICAL: previous attempt hallucinated "dark theme + purple accent
+ * #B3A1FF". Actual screenshots are LIGHT theme with DARK GREEN accent
+ * (#307040 paseo teal-green) and BLACK primary buttons (#101010).
+ * Sampled via Python PIL on the source JPGs — every value below has
+ * a quantized-pixel-count evidence trail in visual-spec.md.
  */
 export const C = {
-  // Canvas + surfaces (3-layer elevation)
-  bg: "#1A1A1F",            // app background — warm dark, slight purple tint
-  surface1: "#232329",      // hover / secondary surface
-  surface2: "#2D2D35",      // card / message bubble
-  surface3: "#3A3A44",      // elevated sheet / popover
-  surfaceSidebar: "#161619", // sidebar (darker than canvas for depth)
+  // ── Backgrounds (LIGHT theme) ──────────────────────────────────────
+  bg: "#FFFFFF",           // main canvas (1/2/3/5/6/7/8.2 sampled)
+  surface1: "#F4F4F4",     // sidebar, card hover, input fill
+  surface2: "#EBEBEB",     // footer, dividers, chip hover
+  surface3: "#E0E0E0",     // borders, hairlines
+  surfaceSidebar: "#F4F4F4", // sidebar = surface1 (off-white)
 
-  // Foreground text
-  fg: "#FAFAFA",            // primary text
-  fgMuted: "#A8A8B3",       // secondary text (subtitles, metadata)
-  fgSubtle: "#6E6E78",      // tertiary text (timestamps, hints, placeholders)
+  // ── Foreground text ────────────────────────────────────────────────
+  fg: "#181818",           // primary text (top bar, titles, body)
+  fgMuted: "#404040",      // secondary text (project rows in sidebar)
+  fgSubtle: "#707070",     // tertiary text (metadata, subtitles)
+  fgFaint: "#A0A0A0",      // placeholder text (inputs)
 
-  // Accent — vibrant purple (screenshot primary)
-  accent: "#B3A1FF",        // primary CTA fill, selected border, user bubble
-  accentBright: "#D4C5FF",  // hover / lighter accent (badge text on dim)
-  accentDim: "#3D2E70",     // pressed / chip background
-  accentForeground: "#1A1A1F", // text/icon on accent fill (same as bg for contrast)
+  // ── Accent — paseo dark green (NOT purple) ─────────────────────────
+  accent: "#307040",       // "Paseo" title, selected-state border, status done
+  accentHover: "#3B6C4D",  // hover (lighter green from anti-alias)
+  accentDim: "#4F8E5C",    // pressed/soft
+  accentForeground: "#FFFFFF", // text on accent fill
 
-  // Status (matches screenshot dots in 8.jpg sidebar)
-  statusOnline: "#4ADE80",  // green — agent done / host reachable
-  statusBusy: "#FBBF24",    // amber — task running
-  statusError: "#F87171",   // red — error / failed
-  statusIdle: "#6E6E78",    // grey — idle / waiting (same as fgSubtle)
+  // ── Primary button (BLACK) ─────────────────────────────────────────
+  btnPrimary: "#101010",   // "Pair new server", "Apply", "Create", send icon
+  btnPrimaryFg: "#FFFFFF",
+  btnPrimaryHover: "#2A2A2A",
 
-  // Destructive (delete buttons, error borders)
-  destructive: "#FF6B6B",
+  // ── Secondary button / chip ───────────────────────────────────────
+  btnSecondary: "#F4F4F4",
+  btnSecondaryFg: "#181818",
 
-  // Borders
-  border: "#2D2D35",        // default border (same as surface2 for subtle separation)
-  borderSubtle: "#232329",  // hairline (same as surface1)
+  // ── Borders ────────────────────────────────────────────────────────
+  border: "#E0E0E0",
+  borderSubtle: "#F0F0F0",
 
-  // Overlays
-  backdrop: "rgba(0,0,0,0.6)", // modal backdrop
-  scrim: "rgba(0,0,0,0.4)",   // lighter scrim for popovers
+  // ── Status (conventional, see visual-spec.md §4 UNVERIFIED) ───────
+  statusOnline: "#3B6C4D", // = accentHover (paseo green)
+  statusBusy: "#D97706",   // Tailwind amber-600
+  statusError: "#DC2626",  // Tailwind red-600
+  statusIdle: "#A0A0A0",
+
+  // ── Destructive ────────────────────────────────────────────────────
+  destructive: "#DC2626",  // = statusError; delete buttons, error bars
+
+  // ── Overlays ───────────────────────────────────────────────────────
+  backdrop: "rgba(0,0,0,0.5)", // modal backdrop (sampled ~#808080 ≈ 50%)
+  scrim: "rgba(0,0,0,0.3)",
 } as const;
 
 export type ColorToken = keyof typeof C;

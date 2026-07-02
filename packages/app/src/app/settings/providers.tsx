@@ -40,7 +40,7 @@ function ProviderField({ label, hint, placeholder }: { label: string; hint: stri
 const styles = StyleSheet.create({
   field: { marginBottom: SP[4] },
   label: {
-    color: C.accentBright, fontSize: FS.xs, fontWeight: FW.semibold,
+    color: C.accentHover, fontSize: FS.xs, fontWeight: FW.semibold,
     letterSpacing: LS.wide,
   },
   hint: { color: C.fgSubtle, fontSize: FS.xs, marginTop: 2, marginBottom: SP[1] },

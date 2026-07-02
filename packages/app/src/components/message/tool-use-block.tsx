@@ -1,15 +1,11 @@
 /**
- * ToolUseBlock — left-aligned, surface1 fill, purple left bar.
+ * ToolUseBlock — collapsible tool call (3.jpg).
  *
- * 3.jpg tool rows: monospace, smaller font, dimmed color, collapsible.
- * The purple left border matches the accent color used elsewhere so
- * tool calls read as "part of the assistant turn" but visually scannable
- * as distinct from the prose.
- *
- * Tap toggles collapse/expand so long tool outputs don't drown the chat.
+ * Left border in paseo dark green (#307040), monospace text, dimmed color.
  */
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { ChevronDown, ChevronRight, Wrench } from "lucide-react-native";
 import { C, FS, RD, SP } from "../../theme";
 import type { Bubble } from "../../stores/session-store";
 
@@ -22,7 +18,11 @@ export function ToolUseBlock({ bubble }: { bubble: Bubble }) {
         onPress={() => setOpen((v) => !v)}
         accessibilityRole="button"
       >
-        <View style={styles.bar} />
+        <View style={styles.header}>
+          <Wrench size={12} color={C.accent} />
+          <Text style={styles.headerText} numberOfLines={1}>tool</Text>
+          {open ? <ChevronDown size={12} color={C.fgSubtle} /> : <ChevronRight size={12} color={C.fgSubtle} />}
+        </View>
         <Text style={styles.text} numberOfLines={open ? undefined : 2}>{bubble.text}</Text>
       </Pressable>
     </View>
@@ -30,27 +30,21 @@ export function ToolUseBlock({ bubble }: { bubble: Bubble }) {
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    justifyContent: "flex-start",
-    marginVertical: 2,
-  } as ViewStyle,
+  row: { flexDirection: "row", justifyContent: "flex-start", marginVertical: 2 } as ViewStyle,
   bubble: {
-    flexDirection: "row",
     backgroundColor: C.surface1,
     borderRadius: RD.md,
-    paddingHorizontal: SP[2],
-    paddingVertical: SP[1],
     borderLeftWidth: 2,
     borderLeftColor: C.accent,
+    paddingHorizontal: SP[2],
+    paddingVertical: SP[1],
     maxWidth: "88%",
-    gap: SP[1],
   } as ViewStyle,
-  bar: { width: 0 } as ViewStyle, // spacer for visual rhythm
+  header: { flexDirection: "row", alignItems: "center", gap: 4, marginBottom: 2 } as ViewStyle,
+  headerText: { color: C.fgSubtle, fontSize: FS.xs, fontFamily: "Menlo", flex: 1 },
   text: {
     color: C.fgMuted,
     fontSize: FS.xs,
     fontFamily: "Menlo",
-    flex: 1,
   },
 });

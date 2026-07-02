@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
   themeCardActive: { borderColor: C.accent } as ViewStyle,
   themeSwatch: { width: "100%", height: 56, borderRadius: RD.md, marginBottom: SP[1] },
   themeLabel: { color: C.fgMuted, fontSize: FS.sm },
-  themeLabelActive: { color: C.accentBright, fontWeight: FW.semibold },
+  themeLabelActive: { color: C.accentHover, fontWeight: FW.semibold },
   scaleRow: { flexDirection: "row", flexWrap: "wrap", gap: SP[1] } as ViewStyle,
   scaleChip: {
     paddingHorizontal: SP[3], paddingVertical: SP[1],
@@ -78,5 +78,5 @@ const styles = StyleSheet.create({
   } as ViewStyle,
   scaleChipActive: { backgroundColor: C.accentDim, borderColor: C.accent } as ViewStyle,
   scaleChipText: { color: C.fgMuted, fontSize: FS.xs },
-  scaleChipTextActive: { color: C.accentBright, fontWeight: FW.semibold },
+  scaleChipTextActive: { color: C.accentHover, fontWeight: FW.semibold },
 });

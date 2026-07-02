@@ -1,22 +1,18 @@
 /**
- * Composer — screenshots 2.jpg / 3.jpg bottom + 3.2.jpg attach menu.
+ * Composer — 2.jpg / 3.jpg bottom + 3.2.jpg attach menu.
  *
- * Layout (left → right):
- *  + button         → opens attach menu (3.2.jpg): Attach file / Take photo
- *  Text input       — multiline autosize (max 120), placeholder "Message Jarvis…"
- *                     When text starts with "/", input-store.showSlash goes true
- *                     and SlashAutocomplete mounts above the input.
- *  🎤 mic           → press-in/press-out 3-mode state machine (hold/tap/auto)
- *  ↑ send (conditional) — only renders when input has non-whitespace.
- *                     Accent purple, sends input to onSubmit.
+ * Sampled layout (left → right):
+ *   + (Plus)        → opens attach Popover (3.2.jpg)
+ *   TextInput       — surface1 fill, 24dp radius, multi-line autosize
+ *   Mic             — circular surface1 button, lucide Mic icon
+ *   ↑ (ArrowUp)     — BLACK button, only when input has text
  *
- * Phase 12 ships UI + slash + 3.2.jpg attach menu. Phase 14 wires mic to
- * voice.ts (startCapture / stopCapture) and send to client.submitCommand.
+ * Slash autocomplete mounts above the row when text starts with "/".
  */
-import { useEffect, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View, ViewStyle } from "react-native";
+import { Plus, Mic, Square, ArrowUp } from "lucide-react-native";
 import { Popover } from "../lib/ui-primitives";
-import { C, FS, FW, RD, SP } from "../theme";
+import { C, FS, RD, SP } from "../theme";
 import { useInputStore } from "../stores/input-store";
 import { useUiStore } from "../stores/ui-store";
 import { SlashAutocomplete } from "./slash-autocomplete";
@@ -49,30 +45,30 @@ export function Composer({ onSubmit, onMicPressIn, onMicPressOut }: Props) {
     <View style={styles.root}>
       <SlashAutocomplete visible={showSlash} options={COMMON_SLASHES} />
       <View style={styles.row}>
-        <Pressable style={styles.iconBtn} onPress={() => setAttachMenuOpen(true)}>
-          <Text style={styles.iconPlus}>+</Text>
+        <Pressable style={styles.iconBtn} onPress={() => setAttachMenuOpen(true)} hitSlop={8}>
+          <Plus size={22} color={C.fgSubtle} />
         </Pressable>
         <TextInput
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          placeholder="Message Jarvis…"
-          placeholderTextColor={C.fgSubtle}
+          placeholder="Message Paseo…"
+          placeholderTextColor={C.fgFaint}
           multiline
           maxLength={4000}
-          onSubmitEditing={submit}
           blurOnSubmit={false}
         />
         <Pressable
           onPressIn={onMicPressIn}
           onPressOut={onMicPressOut}
           style={[styles.iconBtn, recording && styles.micActive]}
+          hitSlop={8}
         >
-          <Text style={styles.iconMic}>{recording ? "■" : "🎤"}</Text>
+          {recording ? <Square size={16} color={C.btnPrimaryFg} fill={C.btnPrimaryFg} /> : <Mic size={18} color={C.fg} />}
         </Pressable>
         {hasText ? (
-          <Pressable style={[styles.iconBtn, styles.sendBtn]} onPress={submit}>
-            <Text style={styles.iconSend}>↑</Text>
+          <Pressable style={[styles.iconBtn, styles.sendBtn]} onPress={submit} hitSlop={8}>
+            <ArrowUp size={18} color={C.btnPrimaryFg} strokeWidth={2.5} />
           </Pressable>
         ) : null}
       </View>
@@ -82,10 +78,10 @@ export function Composer({ onSubmit, onMicPressIn, onMicPressOut }: Props) {
         position={{ bottom: 80, left: 12 }}
       >
         <Pressable style={styles.attachRow} onPress={() => setAttachMenuOpen(false)}>
-          <Text style={styles.attachText}>📎  Attach file</Text>
+          <Text style={styles.attachText}>Attach file</Text>
         </Pressable>
         <Pressable style={styles.attachRow} onPress={() => setAttachMenuOpen(false)}>
-          <Text style={styles.attachText}>📷  Take photo</Text>
+          <Text style={styles.attachText}>Take photo</Text>
         </Pressable>
       </Popover>
     </View>
@@ -100,11 +96,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: SP[2],
     paddingVertical: SP[2],
   } as ViewStyle,
-  row: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: SP[1],
-  } as ViewStyle,
+  row: { flexDirection: "row", alignItems: "flex-end", gap: SP[1] } as ViewStyle,
   iconBtn: {
     width: 38,
     height: 38,
@@ -113,11 +105,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   } as ViewStyle,
-  iconPlus: { color: C.fgMuted, fontSize: 22, fontWeight: FW.bold, marginTop: -2 },
-  iconMic: { color: C.fg, fontSize: 16 },
-  iconSend: { color: C.accentForeground, fontSize: 18, fontWeight: FW.bold, marginTop: -2 },
-  micActive: { backgroundColor: C.destructive } as ViewStyle,
-  sendBtn: { backgroundColor: C.accent } as ViewStyle,
+  micActive: { backgroundColor: C.statusError } as ViewStyle,
+  sendBtn: { backgroundColor: C.btnPrimary } as ViewStyle, // BLACK
   input: {
     flex: 1,
     backgroundColor: C.surface1,
@@ -128,10 +117,6 @@ const styles = StyleSheet.create({
     fontSize: FS.sm,
     maxHeight: 120,
   },
-  attachRow: {
-    paddingVertical: SP[2],
-    paddingHorizontal: SP[3],
-    borderRadius: RD.sm,
-  },
+  attachRow: { paddingVertical: SP[2], paddingHorizontal: SP[3], borderRadius: RD.sm },
   attachText: { color: C.fg, fontSize: FS.sm },
 });

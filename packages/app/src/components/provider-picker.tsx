@@ -1,28 +1,27 @@
 /**
- * ProviderPicker — screenshot 3.1.jpg.
+ * ProviderPicker — 3.1.jpg bottom sheet.
  *
- * Bottom sheet opened by tapping the model badge in TopBar. Three
- * sections:
- *  Provider — 4 round icon buttons (Claude / Codex / Copilot / Gemini),
- *             selected has C.accent border
- *  Model    — chips with the per-provider model list (selecting updates
- *             settings.defaultModel[provider])
- *  Mode     — 3-way segmented control (Plan / Code / Ask)
- *
- * Apply button writes the selection to settings-store and closes.
+ * Sampled:
+ *  - sheet bg white, 24dp top corners
+ *  - 4 round provider buttons in a row (#F4F4F4 fill); selected gets
+ *    paseo dark green border (#307040, 2dp)
+ *  - model chips: selected text turns dark + bold, no fill change
+ *  - mode segmented: selected segment BLACK fill + white text
+ *  - apply button: BLACK #101010 + white text, full width, 12dp radius
  */
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { Sparkles, Terminal, Code2, Gem, X } from "lucide-react-native";
 import { BottomSheet } from "../lib/ui-primitives";
 import { C, FS, FW, RD, SP } from "../theme";
 import { useUiStore } from "../stores/ui-store";
 import { useSettingsStore, type Provider, type Mode } from "../stores/settings-store";
 
-const PROVIDERS: { id: Provider; label: string; glyph: string }[] = [
-  { id: "claude", label: "Claude", glyph: "✦" },
-  { id: "codex", label: "Codex", glyph: " ▪" },
-  { id: "copilot", label: "Copilot", glyph: "◍" },
-  { id: "gemini", label: "Gemini", glyph: "✧" },
+const PROVIDERS: { id: Provider; label: string; Icon: any }[] = [
+  { id: "claude", label: "Claude", Icon: Sparkles },
+  { id: "codex", label: "Codex", Icon: Terminal },
+  { id: "copilot", label: "Copilot", Icon: Code2 },
+  { id: "gemini", label: "Gemini", Icon: Gem },
 ];
 
 const MODELS: Record<Provider, string[]> = {
@@ -55,22 +54,27 @@ export function ProviderPicker() {
 
   return (
     <BottomSheet visible={visible} onClose={() => setVisible(false)}>
-      <Text style={styles.title}>Select provider</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Select provider</Text>
+        <Pressable onPress={() => setVisible(false)} hitSlop={8}>
+          <X size={20} color={C.fgSubtle} />
+        </Pressable>
+      </View>
 
       <Text style={styles.label}>PROVIDER</Text>
       <View style={styles.providerRow}>
-        {PROVIDERS.map((p) => (
+        {PROVIDERS.map(({ id, label, Icon }) => (
           <Pressable
-            key={p.id}
-            style={[styles.providerBtn, provider === p.id && styles.providerBtnActive]}
+            key={id}
+            style={[styles.providerBtn, provider === id && styles.providerBtnActive]}
             onPress={() => {
-              setProvider(p.id);
-              setModel(settings.defaultModel[p.id] ?? MODELS[p.id][0]);
+              setProvider(id);
+              setModel(settings.defaultModel[id] ?? MODELS[id][0]);
             }}
           >
-            <Text style={styles.providerGlyph}>{p.glyph}</Text>
-            <Text style={[styles.providerLabel, provider === p.id && styles.providerLabelActive]}>
-              {p.label}
+            <Icon size={22} color={provider === id ? C.accent : C.fgSubtle} />
+            <Text style={[styles.providerLabel, provider === id && styles.providerLabelActive]}>
+              {label}
             </Text>
           </Pressable>
         ))}
@@ -112,10 +116,11 @@ export function ProviderPicker() {
 }
 
 const styles = StyleSheet.create({
-  title: { color: C.fg, fontSize: FS.lg, fontWeight: FW.semibold, marginBottom: SP[3] },
+  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: SP[3] },
+  title: { color: C.fg, fontSize: FS.lg, fontWeight: FW.semibold },
   label: {
     color: C.fgSubtle, fontSize: FS.xs, fontWeight: FW.semibold,
-    letterSpacing: 1, marginTop: SP[3], marginBottom: SP[2],
+    marginTop: SP[3], marginBottom: SP[2],
   },
   providerRow: { flexDirection: "row", gap: SP[3], justifyContent: "space-around" } as ViewStyle,
   providerBtn: {
@@ -124,33 +129,30 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
     borderWidth: 2, borderColor: "transparent",
   } as ViewStyle,
-  providerBtnActive: { borderColor: C.accent } as ViewStyle,
-  providerGlyph: { fontSize: 24, color: C.fgMuted },
-  providerLabel: { color: C.fgMuted, fontSize: FS.xs, marginTop: 2 },
-  providerLabelActive: { color: C.accentBright, fontWeight: FW.semibold },
+  providerBtnActive: { borderColor: C.accent } as ViewStyle, // paseo dark green
+  providerLabel: { color: C.fgSubtle, fontSize: FS.xs, marginTop: 2 },
+  providerLabelActive: { color: C.accent, fontWeight: FW.semibold },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: SP[1] },
   chip: {
     paddingHorizontal: SP[3], paddingVertical: SP[1],
     borderRadius: 9999, backgroundColor: C.surface1,
     borderWidth: 1, borderColor: C.borderSubtle,
   } as ViewStyle,
-  chipActive: { backgroundColor: C.accentDim, borderColor: C.accent } as ViewStyle,
-  chipText: { color: C.fgMuted, fontSize: FS.xs },
-  chipTextActive: { color: C.accentBright, fontWeight: FW.semibold },
+  chipActive: { borderColor: C.fg } as ViewStyle,
+  chipText: { color: C.fgSubtle, fontSize: FS.xs },
+  chipTextActive: { color: C.fg, fontWeight: FW.semibold },
   segmentedRow: {
     flexDirection: "row", gap: SP[1],
     backgroundColor: C.surface1, borderRadius: RD.md, padding: 2,
   } as ViewStyle,
   segment: { flex: 1, paddingVertical: SP[2], borderRadius: RD.sm, alignItems: "center" },
-  segmentActive: { backgroundColor: C.accent },
-  segmentText: { color: C.fgMuted, fontSize: FS.sm, textTransform: "capitalize" },
-  segmentTextActive: { color: C.accentForeground, fontWeight: FW.semibold },
+  segmentActive: { backgroundColor: C.btnPrimary } as ViewStyle, // BLACK
+  segmentText: { color: C.fgSubtle, fontSize: FS.sm },
+  segmentTextActive: { color: C.btnPrimaryFg, fontWeight: FW.semibold },
   applyBtn: {
-    backgroundColor: C.accent,
-    paddingVertical: SP[3],
-    borderRadius: RD.lg,
-    alignItems: "center",
-    marginTop: SP[5],
+    backgroundColor: C.btnPrimary, // BLACK
+    paddingVertical: SP[3], borderRadius: RD.lg,
+    alignItems: "center", marginTop: SP[5],
   } as ViewStyle,
-  applyText: { color: C.accentForeground, fontSize: FS.base, fontWeight: FW.semibold },
+  applyText: { color: C.btnPrimaryFg, fontSize: FS.base, fontWeight: FW.semibold },
 });

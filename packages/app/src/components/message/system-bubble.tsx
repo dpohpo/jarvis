@@ -1,8 +1,5 @@
 /**
- * SystemBubble — centered chip for system messages.
- *
- * Used for non-chat events the user should notice but not interact with:
- * "Agent created", "Switched workspace", "Disconnected", etc.
+ * SystemBubble — centered chip for non-chat events.
  */
 import { StyleSheet, Text, View, ViewStyle } from "react-native";
 import { C, FS, RD, SP } from "../../theme";
@@ -19,19 +16,12 @@ export function SystemBubble({ bubble }: { bubble: Bubble }) {
 }
 
 const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    justifyContent: "center",
-    marginVertical: SP[1],
-  } as ViewStyle,
+  row: { flexDirection: "row", justifyContent: "center", marginVertical: SP[1] } as ViewStyle,
   chip: {
     backgroundColor: C.surface1,
     borderRadius: RD.full,
     paddingHorizontal: SP[3],
     paddingVertical: SP[1],
   } as ViewStyle,
-  text: {
-    color: C.fgSubtle,
-    fontSize: FS.xs,
-  },
+  text: { color: C.fgSubtle, fontSize: FS.xs },
 });

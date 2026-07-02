@@ -1,31 +1,27 @@
 /**
- * EmptyMain — screenshot 2.jpg body.
+ * EmptyMain — 2.jpg body (no projects yet).
  *
- * Shown inside MainScreen when workspace-store.workspaceList is empty
- * (no projects created yet on this host). When projects exist, Phase 11
- * ChatSurface takes over this slot.
- *
- * Layout (centered, generous breathing room):
- *  80x80 circular icon (surface1 fill, 📂 emoji)
- *  "Welcome to {workspace}" title (lg / semibold / fg)
- *  "You don't have any projects yet" subtitle (sm / fgMuted)
- *  64x64 circular + button (C.accent fill, accentForeground +) → opens
- *  AddProject sheet (2.1.jpg)
+ * Sampled:
+ *  - folder icon in a soft circular tint (#F4F4F4 fill)
+ *  - "Welcome to {workspace}" #181818 ~17pt semibold
+ *  - "You don't have any projects yet" #707070 13pt
+ *  - large circular + button — BLACK (#101010) fill + white + glyph
  */
 import { Pressable, StyleSheet, Text, View, ViewStyle } from "react-native";
-import { C, FS, FW, RD, SP, SHADOWS } from "../theme";
+import { FolderOpen, Plus } from "lucide-react-native";
+import { C, FS, FW, RD, SP } from "../theme";
 import { useUiStore } from "../stores/ui-store";
 import { useWorkspaceStore } from "../stores/workspace-store";
 
 export function EmptyMain() {
   const setAddProjectOpen = useUiStore((s) => s.setAddProjectOpen);
   const workspaceActive = useWorkspaceStore((s) => s.workspaceActive);
-  const name = workspaceActive || "Jarvis";
+  const name = workspaceActive || "Paseo";
 
   return (
     <View style={styles.root}>
       <View style={styles.iconWrap}>
-        <Text style={styles.icon}>📂</Text>
+        <FolderOpen size={36} color={C.fgSubtle} />
       </View>
       <Text style={styles.title}>Welcome to {name}</Text>
       <Text style={styles.subtitle}>You don't have any projects yet</Text>
@@ -35,7 +31,7 @@ export function EmptyMain() {
         accessibilityLabel="Add a project"
         accessibilityRole="button"
       >
-        <Text style={styles.addBtnText}>+</Text>
+        <Plus size={28} color={C.btnPrimaryFg} strokeWidth={2.5} />
       </Pressable>
     </View>
   );
@@ -47,6 +43,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: SP[6],
+    backgroundColor: C.bg,
   } as ViewStyle,
   iconWrap: {
     width: 80,
@@ -57,7 +54,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     marginBottom: SP[5],
   } as ViewStyle,
-  icon: { fontSize: 40 },
   title: {
     color: C.fg,
     fontSize: FS.lg,
@@ -65,24 +61,17 @@ const styles = StyleSheet.create({
     marginBottom: SP[1],
   },
   subtitle: {
-    color: C.fgMuted,
+    color: C.fgSubtle,
     fontSize: FS.sm,
     marginBottom: SP[6],
   },
   addBtn: {
-    width: 64,
-    height: 64,
+    width: 56,
+    height: 56,
     borderRadius: RD.full,
-    backgroundColor: C.accent,
+    backgroundColor: C.btnPrimary, // BLACK
     alignItems: "center",
     justifyContent: "center",
-    ...SHADOWS.md,
   } as ViewStyle,
-  addBtnPressed: { backgroundColor: C.accentBright } as ViewStyle,
-  addBtnText: {
-    color: C.accentForeground,
-    fontSize: 32,
-    fontWeight: FW.bold,
-    marginTop: -2, // optical center
-  },
+  addBtnPressed: { backgroundColor: C.btnPrimaryHover } as ViewStyle,
 });

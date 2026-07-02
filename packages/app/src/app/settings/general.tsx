@@ -1,11 +1,9 @@
 /**
- * General section — screenshots 8.2.1.jpg + 8.2.1.1.jpg.
- *
- * Form rows bound to settings-store. Defaults to spawn mode, language,
- * terminal scrollback, plus a "System" sub-card (8.2.1.1.jpg) showing
- * CPU / memory / disk / OS / app version (read-only diagnostics).
+ * General — 8.2.1.jpg + 8.2.1.1.jpg system card.
+ * Segmented selected = BLACK. Stepper buttons = surface1.
  */
 import { Pressable, ScrollView, StyleSheet, Text, View, ViewStyle } from "react-native";
+import { Minus, Plus } from "lucide-react-native";
 import { C, FS, FW, RD, SP, LS } from "../../theme";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useWorkspaceStore } from "../../stores/workspace-store";
@@ -16,7 +14,7 @@ export function General() {
   const workspaceList = useWorkspaceStore((s) => s.workspaceList);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: SP[3], paddingBottom: SP[6] }}>
+    <ScrollView contentContainerStyle={{ padding: SP[4], paddingBottom: SP[6] }}>
       <Text style={styles.label}>DEFAULT SEND MODE</Text>
       <Segmented
         value={settings.defaultSpawnMode}
@@ -46,27 +44,27 @@ export function General() {
       />
 
       <Text style={styles.label}>AUTO WAKEWORD</Text>
-      <Toggle
+      <ToggleRow
         value={settings.autoWake}
         onChange={(v) => patch({ autoWake: v })}
-        hint="Start listening for &quot;Jarvis&quot; on app boot."
+        hint="Start listening for wake word on app boot."
       />
 
       <Text style={styles.label}>CONVERSATION MODE</Text>
-      <Toggle
+      <ToggleRow
         value={settings.convMode}
         onChange={(v) => patch({ convMode: v })}
         hint="After TTS, auto-listen for next turn."
       />
 
       <Text style={[styles.label, { marginTop: SP[5] }]}>SYSTEM</Text>
-      <View style={styles.systemCard}>
-        <Row k="CPU" v="Apple M1 (8-core)" />
-        <Row k="Memory" v="16 GB" />
-        <Row k="Disk free" v="85 GB / 100 GB sparsebundle" />
-        <Row k="OS" v="macOS 26 (Sequoia)" />
-        <Row k="App version" v="0.1.0 v2-from-scratch" />
-        <Row k="Projects" v={`${workspaceList.length}`} />
+      <View style={styles.card}>
+        <SysRow k="CPU" v="Apple M1 (8-core)" />
+        <SysRow k="Memory" v="16 GB" />
+        <SysRow k="Disk free" v="85 GB / 100 GB sparsebundle" />
+        <SysRow k="OS" v="macOS 26 (Sequoia)" />
+        <SysRow k="App version" v="0.1.0 v2-from-scratch" />
+        <SysRow k="Projects" v={`${workspaceList.length}`} last />
       </View>
     </ScrollView>
   );
@@ -92,17 +90,17 @@ function Stepper({ value, step, min, max, onChange }: { value: number; step: num
   return (
     <View style={styles.stepperRow}>
       <Pressable style={styles.stepBtn} onPress={() => onChange(Math.max(min, value - step))}>
-        <Text style={styles.stepText}>−</Text>
+        <Minus size={14} color={C.fg} />
       </Pressable>
       <Text style={styles.stepValue}>{value.toLocaleString()}</Text>
       <Pressable style={styles.stepBtn} onPress={() => onChange(Math.min(max, value + step))}>
-        <Text style={styles.stepText}>+</Text>
+        <Plus size={14} color={C.fg} />
       </Pressable>
     </View>
   );
 }
 
-function Toggle({ value, onChange, hint }: { value: boolean; onChange: (v: boolean) => void; hint?: string }) {
+function ToggleRow({ value, onChange, hint }: { value: boolean; onChange: (v: boolean) => void; hint?: string }) {
   return (
     <Pressable style={styles.toggleRow} onPress={() => onChange(!value)}>
       <View style={[styles.toggleTrack, value && styles.toggleTrackActive]}>
@@ -113,9 +111,9 @@ function Toggle({ value, onChange, hint }: { value: boolean; onChange: (v: boole
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function SysRow({ k, v, last }: { k: string; v: string; last?: boolean }) {
   return (
-    <View style={styles.sysRow}>
+    <View style={[styles.sysRow, !last && styles.sysRowBorder]}>
       <Text style={styles.sysKey}>{k}</Text>
       <Text style={styles.sysVal} numberOfLines={1}>{v}</Text>
     </View>
@@ -129,21 +127,25 @@ const styles = StyleSheet.create({
   },
   segmentedRow: { flexDirection: "row", gap: SP[1], backgroundColor: C.surface1, borderRadius: RD.md, padding: 2 },
   segment: { flex: 1, paddingVertical: SP[2], borderRadius: RD.sm, alignItems: "center" },
-  segmentActive: { backgroundColor: C.accent },
-  segmentText: { color: C.fgMuted, fontSize: FS.sm },
-  segmentTextActive: { color: C.accentForeground, fontWeight: FW.semibold },
+  segmentActive: { backgroundColor: C.btnPrimary } as ViewStyle,
+  segmentText: { color: C.fgSubtle, fontSize: FS.sm },
+  segmentTextActive: { color: C.btnPrimaryFg, fontWeight: FW.semibold },
   stepperRow: { flexDirection: "row", alignItems: "center", gap: SP[3], backgroundColor: C.surface1, borderRadius: RD.md, padding: SP[2] },
-  stepBtn: { width: 36, height: 36, borderRadius: RD.sm, backgroundColor: C.surface2, alignItems: "center", justifyContent: "center" },
-  stepText: { color: C.fg, fontSize: 20, fontWeight: FW.bold },
+  stepBtn: { width: 32, height: 32, borderRadius: RD.sm, backgroundColor: C.bg, alignItems: "center", justifyContent: "center" },
   stepValue: { color: C.fg, fontSize: FS.base, fontVariant: ["tabular-nums"] },
   toggleRow: { flexDirection: "row", alignItems: "center", gap: SP[3] } as ViewStyle,
-  toggleTrack: { width: 44, height: 24, borderRadius: 9999, backgroundColor: C.surface2, padding: 2 } as ViewStyle,
-  toggleTrackActive: { backgroundColor: C.accent } as ViewStyle,
-  toggleThumb: { width: 20, height: 20, borderRadius: 9999, backgroundColor: C.fg } as ViewStyle,
-  toggleThumbActive: { backgroundColor: C.accentForeground, transform: [{ translateX: 20 }] } as ViewStyle,
+  toggleTrack: { width: 44, height: 24, borderRadius: 9999, backgroundColor: C.surface3, padding: 2 } as ViewStyle,
+  toggleTrackActive: { backgroundColor: C.btnPrimary } as ViewStyle,
+  toggleThumb: { width: 20, height: 20, borderRadius: 9999, backgroundColor: C.bg } as ViewStyle,
+  toggleThumbActive: { backgroundColor: C.btnPrimaryFg, transform: [{ translateX: 20 }] } as ViewStyle,
   toggleHint: { color: C.fgSubtle, fontSize: FS.xs, flex: 1 },
-  systemCard: { backgroundColor: C.surface1, borderRadius: RD.lg, padding: SP[2], marginTop: SP[1] },
-  sysRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: SP[2], paddingHorizontal: SP[2], borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSubtle } as ViewStyle,
-  sysKey: { color: C.fgMuted, fontSize: FS.sm },
+  card: {
+    backgroundColor: C.bg, borderRadius: RD.lg,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: C.borderSubtle,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSubtle,
+  },
+  sysRow: { flexDirection: "row", justifyContent: "space-between", paddingVertical: SP[2], paddingHorizontal: SP[3] } as ViewStyle,
+  sysRowBorder: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: C.borderSubtle },
+  sysKey: { color: C.fgSubtle, fontSize: FS.sm },
   sysVal: { color: C.fg, fontSize: FS.sm, fontWeight: FW.medium },
 });
