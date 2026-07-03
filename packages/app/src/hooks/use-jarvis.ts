@@ -50,8 +50,14 @@ function mapDaemonStatus(s: string): AgentStatus {
 export function useJarvis(state: PhoneState) {
   const client = useRef<JarvisClient | null>(null);
   const pressStart = useRef(0);
+  /** cmdId → agentId mapping for session isolation. When daemon replies
+   *  with a task.event carrying cmdId, we look up which agent originated
+   *  the command and route the reply to THAT agent's lines — not the
+   *  currently-displayed one. */
+  const pendingCmds = useRef<Map<string, string>>(new Map());
 
   const pushLine = useSessionStore((s) => s.pushLine);
+  const pushLineForAgent = useSessionStore((s) => s.pushLineForAgent);
   const setLinkUp = useSessionStore((s) => s.setLinkUp);
   const linkUp = useSessionStore((s) => s.linkUp);
   const setBusy = useSessionStore((s) => s.setBusy);
@@ -67,19 +73,32 @@ export function useJarvis(state: PhoneState) {
     const c = new JarvisClient(state, {
       onLink: setLinkUp,
       onTaskEvent: (e) => {
-        // map event → session line
-        if (e.ev === "output" || e.ev === "done") pushLine({ kind: "assistant", text: e.data });
-        else if (e.ev === "error") pushLine({ kind: "error", text: e.data });
-        else if (e.ev === "tool_use") pushLine({ kind: "tool", text: `⚙ ${e.data}` });
-        else if (e.ev === "progress") pushLine({ kind: "system", text: e.data });
+        // Route event to the correct session via cmdId → agentId mapping.
+        // Without this, switching sessions mid-task would show the reply
+        // in whichever session is currently displayed — "串线" bug.
+        const agentId = (e.cmdId && pendingCmds.current.get(e.cmdId))
+          ?? useSessionStore.getState().currentAgentId
+          ?? "default";
+
+        const push = (b: Parameters<typeof pushLineForAgent>[1]) =>
+          pushLineForAgent(agentId, b);
+
+        if (e.ev === "output" || e.ev === "done") {
+          if (e.data) push({ kind: "assistant", text: e.data });
+        }
+        else if (e.ev === "error") push({ kind: "error", text: e.data });
+        else if (e.ev === "tool_use") push({ kind: "tool", text: `⚙ ${e.data}` });
+        else if (e.ev === "progress") push({ kind: "system", text: e.data });
         // busy state — real tasks only, not chat replies
         if (e.ev === "started") setBusy(true);
         else if (e.ev === "done" || e.ev === "error") {
-          if (!e.taskId.startsWith("chat-")) setBusy(false);
+          if (!e.taskId.startsWith("chat-") && !e.taskId.startsWith("slash-")) setBusy(false);
+          // Clean up cmdId mapping once task is done
+          if (e.cmdId) pendingCmds.current.delete(e.cmdId);
         }
         // sync agent row in sidebar (best-effort)
         const status = statusFromEvent(e.ev);
-        if (status) upsertAgent({ id: e.taskId, title: e.taskId.slice(0, 24), status });
+        if (status) upsertAgent({ id: agentId, title: agentId.slice(0, 24), status });
       },
       onPermRequest: (r: PermRequest) => useUiStore.getState().setPermRequest(r),
       onAsrFinal: (text) =>
@@ -183,8 +202,12 @@ export function useJarvis(state: PhoneState) {
   const submit = (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || !client.current) return;
+    const curAgent = useSessionStore.getState().currentAgentId ?? "default";
     pushLine({ kind: "user", text: trimmed });
-    client.current.submitCommand(trimmed);
+    const cmdId = client.current.submitCommand(trimmed);
+    // Record which agent this command belongs to, so daemon replies
+    // (task.event with cmdId) route to the correct session.
+    pendingCmds.current.set(cmdId, curAgent);
   };
 
   // ----- task control -----
