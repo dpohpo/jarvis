@@ -10,13 +10,13 @@
  */
 import { useRef, useState } from "react";
 import {
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
   type ViewStyle,
-  type LayoutChangeEvent,
 } from "react-native";
 import {
   ChevronDown,
@@ -219,11 +219,24 @@ export function LeftSidebar({
             <Pressable
               style={styles.menuRow}
               onPress={() => {
-                const newName = prompt("Rename to:", menuFor.name);
-                if (newName && newName !== menuFor.name) {
-                  if (menuFor.type === "workspace") onRenameWorkspace?.(menuFor.id, newName);
-                  else onRenameAgent?.(menuFor.id, newName);
-                }
+                Alert.alert(
+                  "Rename",
+                  `Rename "${menuFor.name}" to:`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Rename",
+                      onPress: (text?: string) => {
+                        const newName = (text || "").trim();
+                        if (newName && newName !== menuFor.name) {
+                          if (menuFor.type === "workspace") onRenameWorkspace?.(menuFor.id, newName);
+                          else onRenameAgent?.(menuFor.id, newName);
+                        }
+                      },
+                    },
+                  ],
+                  { cancelable: true },
+                );
                 setMenuFor(null);
               }}
             >
@@ -233,10 +246,21 @@ export function LeftSidebar({
             <Pressable
               style={[styles.menuRow, styles.menuDanger]}
               onPress={() => {
-                if (confirm(`Delete "${menuFor.name}"?`)) {
-                  if (menuFor.type === "workspace") onDeleteWorkspace?.(menuFor.id);
-                  else onDeleteAgent?.(menuFor.id);
-                }
+                Alert.alert(
+                  "Delete",
+                  `Delete "${menuFor.name}"?`,
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Delete",
+                      style: "destructive",
+                      onPress: () => {
+                        if (menuFor.type === "workspace") onDeleteWorkspace?.(menuFor.id);
+                        else onDeleteAgent?.(menuFor.id);
+                      },
+                    },
+                  ],
+                );
                 setMenuFor(null);
               }}
             >
