@@ -92,16 +92,15 @@ export function useJarvis(state: PhoneState) {
         }
       },
       onTaskState: (tasks) => {
-        // Replace agent list with current snapshot.
-        // Daemon protocol TaskStatus enum: running | waiting_approval |
-        // paused | done | error. App's AgentStatus enum is: idle | running
-        // | done | error | needs_input | attention. Map so the popover's
-        // grouped[status] lookup always hits a valid bucket — without
-        // this, a daemon task with status "waiting_approval" makes
-        // grouped["waiting_approval"] undefined and the .push crashes the
-        // whole app on first TaskState event.
+        // Use t.title as agent id (NOT t.taskId). taskId is a per-spawn
+        // ulid that changes every time the daemon re-emits task.state —
+        // if we used it as AsyncStorage key, the phone would never find
+        // previously-saved chat lines after an app restart. title is the
+        // human-readable agent/workspace name which stays stable across
+        // daemon restarts, so AsyncStorage key = title → chat history
+        // survives.
         const agents: Agent[] = tasks.map((t) => ({
-          id: t.taskId,
+          id: t.title,
           title: t.title,
           status: mapDaemonStatus(t.status),
         }));
