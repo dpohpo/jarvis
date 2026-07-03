@@ -286,10 +286,17 @@ export function useJarvis(state: PhoneState) {
   // ----- session switch -----
   const selectAgent = (id: string) => {
     useSessionStore.getState().setAgent(id);
-    // No main-branch payload for history fetch — submit a slash command
-    // so the daemon has a chance to dump history when it upgrades.
-    client.current?.submitCommand(`/history ${id} 50`);
   };
+
+  // Auto-fetch history from daemon when agent changes or link comes up.
+  // Daemon reads agents.sqlite and replays all messages as task.events.
+  // This is the SINGLE source of truth — not AsyncStorage.
+  const currentAgentId = useSessionStore((s) => s.currentAgentId);
+  useEffect(() => {
+    if (linkUp && client.current && currentAgentId) {
+      client.current.submitCommand(`/history ${currentAgentId}`, currentAgentId);
+    }
+  }, [linkUp, currentAgentId]);
 
   // ----- workspace ops (stub until daemon protocol confirms shape) -----
   const switchWorkspace = (name: string) => {

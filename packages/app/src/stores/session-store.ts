@@ -110,25 +110,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  /** Switch to a different session. Does NOT clear lines first —
-   *  waits for AsyncStorage load, then displays. This prevents the
-   *  "flash of empty chat" when switching sessions. */
+  /** Switch to a different session. Clears lines — daemon /history
+   *  replay (triggered by useJarvis effect) will fill them from
+   *  agents.sqlite on Mac. AsyncStorage is offline fallback only. */
   setAgent: (id) => {
-    set({ currentAgentId: id, hydrated: false });
+    set({ currentAgentId: id, lines: [], hydrated: false });
     if (!id) {
-      set({ lines: [], hydrated: true });
+      set({ hydrated: true });
       return;
     }
-    // Persist last agent for app restart auto-restore.
     void AsyncStorage.setItem(LAST_AGENT_KEY, id).catch(() => {});
-    // If we have cached lines in memory, show immediately.
+    // Mark hydrated — actual data comes from daemon /history replay.
+    // If daemon offline, hydrate from AsyncStorage as fallback.
     const cached = lineCache.get(id);
     if (cached && cached.length > 0) {
       set({ lines: cached, hydrated: true });
     } else {
-      // No cache — load from AsyncStorage (first visit after restart).
-      set({ lines: [] });
-      void get().hydrateForAgent(id);
+      set({ hydrated: true }); // empty until daemon replays
     }
   },
 
