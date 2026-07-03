@@ -269,6 +269,8 @@ let active: { taskId: string; from: string; kill: () => void } | null = null;
 let draining = false;
 /** taskIds the user asked to stop before they even started running. */
 const cancelled = new Set<string>();
+/** Per-device Claude Code session_id for --resume. Set by /history slash. */
+const currentResumeSession = new Map<string, string>();
 
 /**
  * Slash-command fast path.
@@ -367,16 +369,25 @@ async function handleSlash(text: string, from: string, cmdId: string): Promise<b
       return true;
     }
     case "history": {
-      // /history <agentId> <limit>
+      // /history <agentId> — switch current agent context + set resume session
       const agentId = args[0];
-      const limit = parseInt(args[1] ?? "50", 10);
-      if (!agentId) {
-        reply("Usage: /history <agentId> [limit]");
-        return true;
-      }
-      log(`[slash] history ${agentId} ${limit}`);
-      // Daemon doesn't yet have per-agent history store — return the global turn log.
-      reply(`History for ${agentId} (last ${limit}): not yet implemented on daemon.`);
+      if (!agentId) return true; // silent no-op
+      log(`[slash] history → switch to agent ${agentId}`);
+      // Query agents.sqlite for the agent's Claude Code session_id so
+      // subsequent cmd.submit can `--resume` that session.
+      try {
+        const dbPath = `${process.env.HOME}/.jarvis/agents.sqlite`;
+        const Database = (await import("better-sqlite3")).default;
+        const db = new Database(dbPath, { readonly: true });
+        const row = db.prepare("SELECT session_id FROM agents WHERE id = ?").get(agentId) as { session_id?: string } | undefined;
+        db.close();
+        if (row?.session_id) {
+          currentResumeSession.set(from, row.session_id);
+          log(`[slash] history → resume session ${row.session_id}`);
+        } else {
+          currentResumeSession.delete(from);
+        }
+      } catch { /* sqlite query failed — first submit will create new session */ }
       return true;
     }
     case "clear": {
@@ -580,7 +591,11 @@ async function runOneCmd(item: QueueItem): Promise<void> {
     task = runClaudeCode({
       prompt: finalText,
       workdir: wd,
-      onSessionId: (sid) => store.setAgentSession(taskId, sid),
+      resumeSessionId: currentResumeSession.get(from),
+      onSessionId: (sid) => {
+        store.setAgentSession(taskId, sid);
+        currentResumeSession.set(from, sid);
+      },
       onEvent: (e) => emit(e.ev, e.data),
     });
   } catch (e) {
