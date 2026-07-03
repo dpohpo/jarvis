@@ -310,18 +310,21 @@ async function handleSlash(text: string, from: string, cmdId: string): Promise<b
   const argstr = trimmed.slice(1 + cmd.length).trim();
 
   const reply = (msg: string) => {
+    // Include cmdId so phone routes slash replies to correct session.
+    const sk = sessionKey(cmdId, from);
     sendTo(from, {
       t: "task.event",
       seq: 0,
+      cmdId: `${sk}::slash-${randomId()}`,
       ev: "output",
       taskId: `slash-${cmdId}`,
       data: msg,
       ts: Date.now(),
     });
-    // Mark the synthetic slash task done so the phone's BusyBanner clears.
     sendTo(from, {
       t: "task.event",
       seq: 0,
+      cmdId: `${sk}::slash-${randomId()}`,
       ev: "done",
       taskId: `slash-${cmdId}`,
       data: cmd,
