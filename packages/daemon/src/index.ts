@@ -437,12 +437,14 @@ async function handleSlash(text: string, from: string, cmdId: string): Promise<b
       return true;
     }
     case "history": {
-      // /history <agentId> — switch session + REPLAY persisted messages to phone.
+      // /history <agentId> — switch daemon session context (brain + resume).
+      // Chat DISPLAY is handled entirely by phone AsyncStorage — daemon
+      // does NOT replay messages. Brain history is loaded from sqlite
+      // on daemon startup (loadAllHistory), so context survives restart.
       const agentId = args[0];
       if (!agentId) return true;
       log(`[slash] history → switch to agent ${agentId}`);
       currentSession.set(from, agentId);
-
       // Set Claude Code resume session_id from agents.sqlite.
       try {
         const row = msgDb.prepare("SELECT session_id FROM agents WHERE id = ? OR title = ?").get(agentId, agentId) as { session_id?: string } | undefined;
@@ -451,23 +453,7 @@ async function handleSlash(text: string, from: string, cmdId: string): Promise<b
           log(`[slash] history → resume CC session ${row.session_id}`);
         }
       } catch { /* first time */ }
-
-      // Replay persisted messages from agents.sqlite to phone.
-      const turns = loadSessionHistory(agentId);
-      if (turns.length > 0) {
-        for (const t of turns) {
-          sendTo(from, {
-            t: "task.event", seq: 0,
-            cmdId: `${agentId}::history-${randomId()}`,
-            taskId: `history-${agentId}`,
-            ev: "output",
-            data: t.role === "user" ? `🧑 ${t.content}` : t.content,
-            ts: Date.now(),
-          });
-        }
-        log(`[slash] history → replayed ${turns.length} messages to phone`);
-      }
-      return true;
+      return true; // silent — no chat replay
     }
     case "clear": {
       // /clear — phone-side clears chat, daemon just acknowledges.

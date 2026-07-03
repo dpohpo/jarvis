@@ -1,12 +1,13 @@
 /**
- * Session store — per-agent conversation state.
+ * Session store — per-agent conversation state with AsyncStorage persistence.
  *
- * Each agent (session) has its own Bubble[] stored in `allLines` Map.
- * `lines` is just a view into allLines[currentAgentId].
+ * DESIGN (user directive): chat history is a FRONTEND concern.
+ * Every pushLine writes to AsyncStorage immediately. setAgent loads
+ * from AsyncStorage before displaying. App restart auto-restores
+ * the last session. No daemon replay needed.
  *
- * When a task.event arrives, useJarvis routes it via pushLineForAgent()
- * using cmdId → agentId mapping. This ensures replies land in the
- * correct session even when the user has switched to a different one.
+ * Key format: jarvis_session_lines_<agentId>
+ * Agent ID = agent title (stable across daemon restarts).
  */
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -20,7 +21,6 @@ export interface Bubble {
 
 interface SessionState {
   currentAgentId: string | null;
-  allLines: Map<string, Bubble[]>;
   lines: Bubble[];
   busy: boolean;
   linkUp: boolean;
@@ -39,6 +39,8 @@ const MAX_LINES = 300;
 const KEY_PREFIX = "jarvis_session_lines_";
 const LAST_AGENT_KEY = "jarvis_last_agent";
 
+// --- AsyncStorage helpers ---
+
 async function readLines(agentId: string): Promise<Bubble[]> {
   try {
     const raw = await AsyncStorage.getItem(KEY_PREFIX + agentId);
@@ -50,18 +52,29 @@ async function readLines(agentId: string): Promise<Bubble[]> {
   }
 }
 
-let writeScheduled: Record<string, ReturnType<typeof setTimeout>> = {};
-function scheduleWrite(agentId: string, getLines: () => Bubble[]) {
-  if (writeScheduled[agentId]) clearTimeout(writeScheduled[agentId]);
-  writeScheduled[agentId] = setTimeout(() => {
-    const lines = getLines();
-    void AsyncStorage.setItem(KEY_PREFIX + agentId, JSON.stringify(lines)).catch(() => {});
-  }, 150);
+async function writeLines(agentId: string, lines: Bubble[]): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEY_PREFIX + agentId, JSON.stringify(lines.slice(-MAX_LINES)));
+  } catch {
+    // best-effort
+  }
 }
+
+// Debounced writer per agent — coalesce rapid pushLine bursts.
+const writeTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+function scheduleWrite(agentId: string, lines: Bubble[]): void {
+  if (writeTimers[agentId]) clearTimeout(writeTimers[agentId]);
+  writeTimers[agentId] = setTimeout(() => {
+    void writeLines(agentId, lines);
+  }, 100);
+}
+
+// In-memory cache: agentId → Bubble[]. Survives session switches within
+// one app launch. AsyncStorage is the persistent backup for restarts.
+const lineCache = new Map<string, Bubble[]>();
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   currentAgentId: null,
-  allLines: new Map<string, Bubble[]>(),
   lines: [],
   busy: false,
   linkUp: false,
@@ -70,50 +83,52 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   clear: () => {
     const cur = get().currentAgentId;
     if (cur) {
-      get().allLines.delete(cur);
+      lineCache.delete(cur);
       void AsyncStorage.removeItem(KEY_PREFIX + cur).catch(() => {});
     }
     set({ lines: [], currentAgentId: null, busy: false });
+    void AsyncStorage.removeItem(LAST_AGENT_KEY).catch(() => {});
   },
 
   pushLine: (b) => {
-    const cur = get().currentAgentId;
-    if (!cur) return;
+    const cur = get().currentAgentId ?? "default";
     get().pushLineForAgent(cur, b);
   },
 
-  /** Push a bubble to a SPECIFIC agent's lines — not necessarily the
-   *  currently-displayed one. This is the key method for session
-   *  isolation: daemon replies are routed here with the agentId
-   *  recovered from cmdId mapping. */
+  /** Push to a specific agent — the core session isolation method.
+   *  Writes to in-memory cache + AsyncStorage immediately. */
   pushLineForAgent: (agentId, b) => {
-    const next: Bubble = { ...b, id: `${Date.now()}-${Math.random()}`, ts: Date.now() };
-    const all = get().allLines;
-    const existing = all.get(agentId) ?? [];
-    const updated = [...existing.slice(-MAX_LINES + 1), next];
-    all.set(agentId, updated);
-    scheduleWrite(agentId, () => updated);
-    // Only update display lines if this is the currently-shown agent.
+    const bubble: Bubble = { ...b, id: `${Date.now()}-${Math.random()}`, ts: Date.now() };
+    const cached = lineCache.get(agentId) ?? [];
+    const updated = [...cached.slice(-MAX_LINES + 1), bubble];
+    lineCache.set(agentId, updated);
+    // Persist to AsyncStorage (debounced 100ms).
+    scheduleWrite(agentId, updated);
+    // Update display only if this is the currently shown agent.
     if (get().currentAgentId === agentId) {
       set({ lines: updated });
     }
   },
 
+  /** Switch to a different session. Does NOT clear lines first —
+   *  waits for AsyncStorage load, then displays. This prevents the
+   *  "flash of empty chat" when switching sessions. */
   setAgent: (id) => {
     set({ currentAgentId: id, hydrated: false });
-    if (id) {
-      void AsyncStorage.setItem(LAST_AGENT_KEY, id).catch(() => {});
-      // If we already have this agent's lines in memory, show immediately.
-      const existing = get().allLines.get(id);
-      if (existing) {
-        set({ lines: existing, hydrated: true });
-      } else {
-        set({ lines: [] });
-        void get().hydrateForAgent(id);
-      }
-    } else {
-      void AsyncStorage.removeItem(LAST_AGENT_KEY).catch(() => {});
+    if (!id) {
       set({ lines: [], hydrated: true });
+      return;
+    }
+    // Persist last agent for app restart auto-restore.
+    void AsyncStorage.setItem(LAST_AGENT_KEY, id).catch(() => {});
+    // If we have cached lines in memory, show immediately.
+    const cached = lineCache.get(id);
+    if (cached && cached.length > 0) {
+      set({ lines: cached, hydrated: true });
+    } else {
+      // No cache — load from AsyncStorage (first visit after restart).
+      set({ lines: [] });
+      void get().hydrateForAgent(id);
     }
   },
 
@@ -122,16 +137,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   hydrateForAgent: async (id) => {
     const lines = await readLines(id);
-    get().allLines.set(id, lines);
+    lineCache.set(id, lines);
     if (get().currentAgentId === id) {
       set({ lines, hydrated: true });
     }
   },
 
+  /** Called on app boot — reads last agent + restores its chat. */
   restoreLastAgent: async () => {
     try {
       const lastId = await AsyncStorage.getItem(LAST_AGENT_KEY);
       if (lastId) {
+        // Load lines from AsyncStorage BEFORE setting agent (so setAgent
+        // finds them in cache and shows immediately, no flash).
+        const lines = await readLines(lastId);
+        lineCache.set(lastId, lines);
         get().setAgent(lastId);
       } else {
         set({ hydrated: true });
