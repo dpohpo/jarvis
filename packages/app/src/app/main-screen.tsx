@@ -67,12 +67,22 @@ export function MainScreen({ state }: Props) {
           linkUp={linkUp}
           onHome={() => setDrawerOpen(false)}
           onSelectAgent={(id) => jarvis.selectAgent(id)}
-          onRename={(oldName, newName) => jarvis.renameAgent(oldName, newName)}
-          onArchive={(name) => {
-            // Archive mirrors to delete until a separate archived section exists.
-            jarvis.deleteAgent(name);
+          onRenameWorkspace={(oldName, newName) => jarvis.renameAgent(oldName, newName)}
+          onDeleteWorkspace={(name: string) => jarvis.deleteAgent(name)}
+          onAddSession={(ws: string) => {
+            // Create a new session in this workspace
+            const id = `agent-${Date.now()}`;
+            useWorkspaceStore.getState().upsertAgent({ id, title: "New session", status: "idle", workspace: ws });
+            jarvis.selectAgent(id);
+            setDrawerOpen(false);
           }}
-          onDelete={(name) => jarvis.deleteAgent(name)}
+          onRenameAgent={(id: string, newName: string) => {
+            const agent = useWorkspaceStore.getState().agents.find((a) => a.id === id);
+            if (agent) useWorkspaceStore.getState().upsertAgent({ ...agent, title: newName });
+          }}
+          onDeleteAgent={(id: string) => {
+            useWorkspaceStore.getState().removeAgent(id);
+          }}
         />
       </Drawer>
       <AddProjectSheet
