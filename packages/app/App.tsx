@@ -17,6 +17,7 @@ import { ensureCrypto } from "./src/crypto-init";
 import { loadState, type PhoneState } from "./src/store";
 import { loadSettings, useSettingsStore } from "./src/stores/settings-store";
 import { loadWorkspace, useWorkspaceStore } from "./src/stores/workspace-store";
+import { useSessionStore } from "./src/stores/session-store";
 import { LoadingScreen } from "./src/app/loading-screen";
 import { LoginScreen } from "./src/app/login-screen";
 import { MainScreen } from "./src/app/main-screen";
@@ -63,6 +64,11 @@ function Root() {
           agents: workspace.agents,
         });
       }
+      // Restore last conversation — reads jarvis_last_agent from
+      // AsyncStorage, calls setAgent(id) → hydrateForAgent loads
+      // the per-agent chat lines. Without this, app restart always
+      // shows empty chat even though AsyncStorage has the data.
+      await useSessionStore.getState().restoreLastAgent();
       setBooted(true);
     })();
   }, []);

@@ -34,10 +34,12 @@ interface SessionState {
   setBusy: (v: boolean) => void;
   setLinkUp: (v: boolean) => void;
   hydrateForAgent: (id: string) => Promise<void>;
+  restoreLastAgent: () => Promise<void>;
 }
 
 const MAX_LINES = 300;
 const KEY_PREFIX = "jarvis_session_lines_";
+const LAST_AGENT_KEY = "jarvis_last_agent";
 
 /** Read persisted lines for an agent (or empty array). */
 async function readLines(agentId: string): Promise<Bubble[]> {
@@ -91,8 +93,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setAgent: (id) => {
     set({ currentAgentId: id, lines: [], hydrated: false });
     if (id) {
+      // Persist last agent so app restart auto-restores the conversation.
+      void AsyncStorage.setItem(LAST_AGENT_KEY, id).catch(() => {});
       void get().hydrateForAgent(id);
     } else {
+      void AsyncStorage.removeItem(LAST_AGENT_KEY).catch(() => {});
       set({ hydrated: true });
     }
   },
@@ -102,9 +107,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   hydrateForAgent: async (id) => {
     const lines = await readLines(id);
-    // Guard against the user switching agents again while we were loading.
     if (get().currentAgentId === id) {
       set({ lines, hydrated: true });
+    }
+  },
+
+  /** Called on app boot — reads last agent from AsyncStorage and restores. */
+  restoreLastAgent: async () => {
+    try {
+      const lastId = await AsyncStorage.getItem(LAST_AGENT_KEY);
+      if (lastId) {
+        get().setAgent(lastId);
+      } else {
+        set({ hydrated: true });
+      }
+    } catch {
+      set({ hydrated: true });
     }
   },
 }));
