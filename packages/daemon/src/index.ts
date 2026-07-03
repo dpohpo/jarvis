@@ -575,7 +575,9 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   }
 
   const verdict = classifyCommand(finalText, wd);
-  store.create(taskId, finalText.slice(0, 120), wd);
+  // Task may already exist if the confirmation gate created it above.
+  // Wrap in try/catch to avoid UNIQUE constraint crash.
+  try { store.create(taskId, finalText.slice(0, 120), wd); } catch { /* already created */ }
   log(`cmd ${cmdId} → task ${taskId} (tier ${verdict.tier}: ${verdict.reason})`);
 
   const emit = (ev: Parameters<typeof store.addEvent>[1], data: string) => {
