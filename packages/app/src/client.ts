@@ -154,8 +154,14 @@ export class JarvisClient {
     this.relay.stop();
   }
 
-  submitCommand(text: string): string {
-    const cmdId = randomId();
+  /** Submit a command. sessionId is encoded into cmdId as
+   *  `${sessionId}::${random}` so daemon round-trips it back in
+   *  task.event. Phone parses cmdId to route replies to the correct
+   *  session. This achieves per-session isolation WITHOUT protocol
+   *  schema changes. */
+  submitCommand(text: string, sessionId?: string): string {
+    const suffix = randomId();
+    const cmdId = sessionId ? `${sessionId}::${suffix}` : suffix;
     this.send({ t: "cmd.submit", seq: 0, cmdId, text } as never);
     return cmdId;
   }

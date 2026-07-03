@@ -142,7 +142,10 @@ function sendVoiceTo(deviceId: string, payload: Payload): void {
 // ---- voice sessions ---------------------------------------------------------
 
 const voiceBuffers = new Map<string, Uint8Array[]>();
-/** Rolling conversation history per device (for the brain router). */
+/** Rolling conversation history keyed by sessionId (NOT deviceId).
+ *  This ensures each session has its own brain context — Session 3
+ *  doesn't see what was said in Session 1. SessionId is extracted
+ *  from cmdId (format: "sessionId::randomSuffix"). */
 const chatHistory = new Map<string, Turn[]>();
 
 function remember(deviceId: string, role: Turn["role"], content: string): void {
@@ -214,14 +217,15 @@ async function handleVoiceEnd(from: string): Promise<void> {
       return;
     }
     sendTo(from, { t: "asr.final", seq: 0, text });
-    remember(from, "user", text);
+    const sk = currentSession.get(from) ?? from;
+    remember(sk, "user", text);
 
     // brain: clean + decide in one call (graceful: falls back to direct task)
-    const decision = await route(text, chatHistory.get(from) ?? []);
+    const decision = await route(text, chatHistory.get(sk) ?? []);
     log(`brain: ${decision.action}${decision.task ? ` task='${decision.task.slice(0, 60)}'` : ""}`);
 
     if (decision.action === "answer" || decision.action === "clarify") {
-      remember(from, "assistant", decision.reply);
+      remember(sk, "assistant", decision.reply);
       // show the reply as a chat line in the console too
       sendTo(from, {
         t: "task.event",
@@ -238,11 +242,11 @@ async function handleVoiceEnd(from: string): Promise<void> {
     }
 
     // task: short spoken ack first, then execute with spoken result
-    remember(from, "assistant", decision.reply || "好的。");
+    remember(sk, "assistant", decision.reply || "好的。");
     void speakTo(from, decision.reply || "好的，这就去办。");
     enqueueCmd({
       from,
-      cmdId: randomId(),
+      cmdId: `${sk}::${randomId()}`,
       text: decision.task || text,
       opts: { voiceReply: true },
     });
@@ -271,6 +275,18 @@ let draining = false;
 const cancelled = new Set<string>();
 /** Per-device Claude Code session_id for --resume. Set by /history slash. */
 const currentResumeSession = new Map<string, string>();
+/** Per-device current sessionId (for voice path that has no cmdId). */
+const currentSession = new Map<string, string>();
+
+/** Extract sessionId from cmdId (format: "sessionId::randomSuffix").
+ *  Falls back to deviceId for backward compat. */
+function sessionKey(cmdId: string | undefined, deviceId: string): string {
+  if (cmdId) {
+    const parts = cmdId.split("::");
+    if (parts.length >= 2) return parts[0] as string;
+  }
+  return currentSession.get(deviceId) ?? deviceId;
+}
 
 /**
  * Slash-command fast path.
@@ -373,7 +389,8 @@ async function handleSlash(text: string, from: string, cmdId: string): Promise<b
       const agentId = args[0];
       if (!agentId) return true; // silent no-op
       log(`[slash] history → switch to agent ${agentId}`);
-      // Query agents.sqlite for the agent's Claude Code session_id so
+      // Set current session so voice path + brain history use this agent.
+      currentSession.set(from, agentId);
       // subsequent cmd.submit can `--resume` that session.
       try {
         const dbPath = `${process.env.HOME}/.jarvis/agents.sqlite`;
@@ -465,6 +482,8 @@ function taskSummaries(): TaskSummary[] {
 async function runOneCmd(item: QueueItem): Promise<void> {
   const { from, cmdId, text, workdir, opts, taskId } = item;
   const wd = workdir ?? state.workdir;
+  // Extract sessionId from cmdId for per-session brain history isolation.
+  const sk = sessionKey(cmdId, from);
 
   // Phase 15-v7: route through the brain (GLM) for clean + decide, even for
   // typed text submits. Mirrors what the voice path already does, so typed
@@ -481,14 +500,14 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   let finalText = text;
   let brainShortCircuit: null | { reply: string; expectReply: boolean } = null;
   if (!text.trim().startsWith("/")) {
-    const history = chatHistory.get(from) ?? [];
+    const history = chatHistory.get(sk) ?? [];
     try {
       const decision = await route(text, history);
       log(`brain: ${decision.action}${decision.task ? ` task='${decision.task.slice(0, 60)}'` : ""}`);
-      remember(from, "user", text);
+      remember(sk, "user", text);
 
       if (decision.action === "answer" || decision.action === "clarify") {
-        remember(from, "assistant", decision.reply);
+        remember(sk, "assistant", decision.reply);
         store.create(taskId, text.slice(0, 120), wd);
         store.setStatus(taskId, "done");
         store.addEvent(taskId, "done", decision.reply);
@@ -509,7 +528,7 @@ async function runOneCmd(item: QueueItem): Promise<void> {
       // We send it to the phone as a perm.request so the user sees exactly
       // what will be dispatched to Claude Code and can approve or reject.
       finalText = decision.task || text;
-      remember(from, "assistant", decision.reply || "好的。");
+      remember(sk, "assistant", decision.reply || "好的。");
       if (opts?.voiceReply && decision.reply) {
         void speakTo(from, decision.reply);
       }
@@ -624,7 +643,7 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   store.setStatus(taskId, ok ? "done" : "error");
   if (opts?.voiceReply) {
     const spoken = ok ? result || "完成了。" : `出错了：${result.slice(0, 200)}`;
-    remember(from, "assistant", `[任务结果] ${spoken.slice(0, 300)}`);
+    remember(sk, "assistant", `[任务结果] ${spoken.slice(0, 300)}`);
     void speakTo(from, spoken, { expectReply: true });
   }
 }

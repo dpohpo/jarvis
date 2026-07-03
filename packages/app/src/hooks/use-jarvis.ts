@@ -73,10 +73,13 @@ export function useJarvis(state: PhoneState) {
     const c = new JarvisClient(state, {
       onLink: setLinkUp,
       onTaskEvent: (e) => {
-        // Route event to the correct session via cmdId → agentId mapping.
-        // Without this, switching sessions mid-task would show the reply
-        // in whichever session is currently displayed — "串线" bug.
-        const agentId = (e.cmdId && pendingCmds.current.get(e.cmdId))
+        // Parse sessionId from cmdId (format: "sessionId::randomSuffix").
+        // This routes replies to the CORRECT session, not the currently
+        // displayed one. Falls back to currentAgentId for events without
+        // cmdId (e.g. voice-path brain replies).
+        const sid = e.cmdId?.split("::")[0];
+        const agentId = sid
+          ?? pendingCmds.current.get(e.cmdId ?? "")
           ?? useSessionStore.getState().currentAgentId
           ?? "default";
 
@@ -89,14 +92,10 @@ export function useJarvis(state: PhoneState) {
         else if (e.ev === "error") push({ kind: "error", text: e.data });
         else if (e.ev === "tool_use") push({ kind: "tool", text: `⚙ ${e.data}` });
         else if (e.ev === "progress") push({ kind: "system", text: e.data });
-        // busy state — real tasks only, not chat replies
         if (e.ev === "started") setBusy(true);
         else if (e.ev === "done" || e.ev === "error") {
           if (!e.taskId.startsWith("chat-") && !e.taskId.startsWith("slash-")) setBusy(false);
-          // Clean up cmdId mapping once task is done
-          if (e.cmdId) pendingCmds.current.delete(e.cmdId);
         }
-        // sync agent row in sidebar (best-effort)
         const status = statusFromEvent(e.ev);
         if (status) upsertAgent({ id: agentId, title: agentId.slice(0, 24), status });
       },
@@ -204,10 +203,9 @@ export function useJarvis(state: PhoneState) {
     if (!trimmed || !client.current) return;
     const curAgent = useSessionStore.getState().currentAgentId ?? "default";
     pushLine({ kind: "user", text: trimmed });
-    const cmdId = client.current.submitCommand(trimmed);
-    // Record which agent this command belongs to, so daemon replies
-    // (task.event with cmdId) route to the correct session.
-    pendingCmds.current.set(cmdId, curAgent);
+    // Encode sessionId in cmdId so daemon round-trips it → phone routes
+    // reply to correct session even if user switched mid-task.
+    client.current.submitCommand(trimmed, curAgent);
   };
 
   // ----- task control -----
