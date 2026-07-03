@@ -226,11 +226,12 @@ async function handleVoiceEnd(from: string): Promise<void> {
 
     if (decision.action === "answer" || decision.action === "clarify") {
       remember(sk, "assistant", decision.reply);
-      // show the reply as a chat line in the console too
+      // Encode sessionId in cmdId so phone routes reply to correct session.
       sendTo(from, {
         t: "task.event",
         seq: 0,
         taskId: `chat-${randomId().slice(0, 8)}`,
+        cmdId: `${sk}::${randomId()}`,
         ev: "done",
         data: decision.reply,
         ts: Date.now(),
