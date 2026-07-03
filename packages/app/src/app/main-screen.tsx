@@ -66,6 +66,7 @@ export function MainScreen({ state }: Props) {
           hostName={state.daemonDeviceId}
           linkUp={linkUp}
           onHome={() => setDrawerOpen(false)}
+          onSelectAgent={(id) => jarvis.selectAgent(id)}
           onRename={(oldName, newName) => jarvis.renameAgent(oldName, newName)}
           onArchive={(name) => {
             // Archive mirrors to delete until a separate archived section exists.

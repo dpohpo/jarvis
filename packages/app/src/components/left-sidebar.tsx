@@ -50,6 +50,8 @@ interface Props {
   hostName: string;
   linkUp: boolean;
   onHome: () => void;
+  /** Select a session — restores previous chat for that agent. */
+  onSelectAgent?: (id: string) => void;
   /** Rename a project. Parent wires to useJarvis.renameAgent. */
   onRename?: (oldName: string, newName: string) => void;
   /** Archive a project (collapses out of view, kept in store). */
@@ -58,7 +60,7 @@ interface Props {
   onDelete?: (name: string) => void;
 }
 
-export function LeftSidebar({ hostName, linkUp, onHome, onRename, onArchive, onDelete }: Props) {
+export function LeftSidebar({ hostName, linkUp, onHome, onSelectAgent, onRename, onArchive, onDelete }: Props) {
   const setSettingsOpen = useUiStore((s) => s.setSettingsOpen);
   const setSessionPickerOpen = useUiStore((s) => s.setSessionPickerOpen);
   const setAddProjectOpen = useUiStore((s) => s.setAddProjectOpen);
@@ -134,7 +136,9 @@ export function LeftSidebar({ hostName, linkUp, onHome, onRename, onArchive, onD
         {agents.length === 0 ? (
           <Text style={styles.emptyHint}>No sessions yet</Text>
         ) : (
-          agents.slice(0, 12).map((a) => <SessionRow key={a.id} agent={a} />)
+          agents.slice(0, 12).map((a) => (
+            <SessionRow key={a.id} agent={a} onSelect={() => { onHome(); onSelectAgent?.(a.id); }} />
+          ))
         )}
       </ScrollView>
 
@@ -187,9 +191,9 @@ export function LeftSidebar({ hostName, linkUp, onHome, onRename, onArchive, onD
   );
 }
 
-function SessionRow({ agent }: { agent: Agent }) {
+function SessionRow({ agent, onSelect }: { agent: Agent; onSelect: () => void }) {
   return (
-    <Pressable style={styles.agentRow}>
+    <Pressable style={styles.agentRow} onPress={onSelect}>
       <View style={[styles.agentDot, { backgroundColor: STATUS_DOT[agent.status] }]} />
       <Text style={styles.agentTitle} numberOfLines={1}>{agent.title}</Text>
     </Pressable>
