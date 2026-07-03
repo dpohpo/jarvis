@@ -48,6 +48,7 @@ import { ApprovalBroker, classifyCommand } from "./approval.js";
 import { pcm16ToWav } from "./voice/wav.js";
 import { ensureAsrSidecar, synthesizeAny, transcribeAny } from "./voice/local.js";
 import { route, type Turn } from "./brain/router.js";
+import Database from "better-sqlite3";
 
 // load ~/.jarvis/env (KEY=value lines) before reading any config
 try {
@@ -145,13 +146,60 @@ const voiceBuffers = new Map<string, Uint8Array[]>();
 /** Rolling conversation history keyed by sessionId (NOT deviceId).
  *  This ensures each session has its own brain context — Session 3
  *  doesn't see what was said in Session 1. SessionId is extracted
- *  from cmdId (format: "sessionId::randomSuffix"). */
+ *  from cmdId (format: "sessionId::randomSuffix").
+ *
+ *  Persisted to agents.sqlite `messages` table so daemon restart
+ *  doesn't lose history. Loaded on startup, written on every remember(). */
 const chatHistory = new Map<string, Turn[]>();
 
-function remember(deviceId: string, role: Turn["role"], content: string): void {
-  const h = chatHistory.get(deviceId) ?? [];
+// --- Persistent message store (agents.sqlite) ---
+const AGENTS_DB = `${process.env.HOME}/.jarvis/agents.sqlite`;
+const msgDb = new Database(AGENTS_DB);
+msgDb.exec(`CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  ts INTEGER NOT NULL
+)`);
+msgDb.exec(`CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, ts)`);
+
+const stmtInsertMsg = msgDb.prepare(
+  "INSERT INTO messages (session_id, role, content, ts) VALUES (?, ?, ?, ?)",
+);
+const stmtLoadMsgs = msgDb.prepare(
+  "SELECT role, content FROM messages WHERE session_id = ? ORDER BY ts ASC LIMIT 50",
+);
+
+/** Load persisted messages for a session into chatHistory on startup. */
+function loadSessionHistory(sessionId: string): Turn[] {
+  const rows = stmtLoadMsgs.all(sessionId) as Array<{ role: string; content: string }>;
+  return rows.map((r) => ({ role: r.role as Turn["role"], content: r.content }));
+}
+
+/** Load ALL sessions from messages table into chatHistory on startup. */
+function loadAllHistory(): void {
+  const sessions = msgDb.prepare(
+    "SELECT DISTINCT session_id FROM messages",
+  ).all() as Array<{ session_id: string }>;
+  for (const s of sessions) {
+    const turns = loadSessionHistory(s.session_id);
+    if (turns.length > 0) chatHistory.set(s.session_id, turns);
+  }
+  log(`[history] loaded ${sessions.length} sessions from sqlite`);
+}
+loadAllHistory();
+
+function remember(sessionId: string, role: Turn["role"], content: string): void {
+  const h = chatHistory.get(sessionId) ?? [];
   h.push({ role, content });
-  chatHistory.set(deviceId, h.slice(-20));
+  chatHistory.set(sessionId, h.slice(-20));
+  // Persist to agents.sqlite so daemon restart doesn't lose context.
+  try {
+    stmtInsertMsg.run(sessionId, role, content, Date.now());
+  } catch (e) {
+    log(`[history] persist failed: ${String(e)}`);
+  }
 }
 
 /** 16kHz/22kHz mono PCM16 WAV → playback ms, straight from the header. */
@@ -389,26 +437,36 @@ async function handleSlash(text: string, from: string, cmdId: string): Promise<b
       return true;
     }
     case "history": {
-      // /history <agentId> — switch current agent context + set resume session
+      // /history <agentId> — switch session + REPLAY persisted messages to phone.
       const agentId = args[0];
-      if (!agentId) return true; // silent no-op
+      if (!agentId) return true;
       log(`[slash] history → switch to agent ${agentId}`);
-      // Set current session so voice path + brain history use this agent.
       currentSession.set(from, agentId);
-      // subsequent cmd.submit can `--resume` that session.
+
+      // Set Claude Code resume session_id from agents.sqlite.
       try {
-        const dbPath = `${process.env.HOME}/.jarvis/agents.sqlite`;
-        const Database = (await import("better-sqlite3")).default;
-        const db = new Database(dbPath, { readonly: true });
-        const row = db.prepare("SELECT session_id FROM agents WHERE id = ?").get(agentId) as { session_id?: string } | undefined;
-        db.close();
+        const row = msgDb.prepare("SELECT session_id FROM agents WHERE id = ? OR title = ?").get(agentId, agentId) as { session_id?: string } | undefined;
         if (row?.session_id) {
           currentResumeSession.set(from, row.session_id);
-          log(`[slash] history → resume session ${row.session_id}`);
-        } else {
-          currentResumeSession.delete(from);
+          log(`[slash] history → resume CC session ${row.session_id}`);
         }
-      } catch { /* sqlite query failed — first submit will create new session */ }
+      } catch { /* first time */ }
+
+      // Replay persisted messages from agents.sqlite to phone.
+      const turns = loadSessionHistory(agentId);
+      if (turns.length > 0) {
+        for (const t of turns) {
+          sendTo(from, {
+            t: "task.event", seq: 0,
+            cmdId: `${agentId}::history-${randomId()}`,
+            taskId: `history-${agentId}`,
+            ev: "output",
+            data: t.role === "user" ? `🧑 ${t.content}` : t.content,
+            ts: Date.now(),
+          });
+        }
+        log(`[slash] history → replayed ${turns.length} messages to phone`);
+      }
       return true;
     }
     case "clear": {
