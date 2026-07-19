@@ -7,6 +7,7 @@
  *  error     → ErrorBubble (left-aligned, red bar)
  *  system    → SystemBubble (centered, pill chip)
  *  local     → UserMessage (treat local echoes like user bubbles)
+ *  approval  → ApprovalBubble (Phase 15-v10; inline Tier 3 approval card)
  */
 import type { Bubble } from "../../stores/session-store";
 import { UserMessage } from "./user-message";
@@ -14,6 +15,7 @@ import { AssistantMessage } from "./assistant-message";
 import { ToolUseBlock } from "./tool-use-block";
 import { ErrorBubble } from "./error-bubble";
 import { SystemBubble } from "./system-bubble";
+import { ApprovalBubble } from "./approval-bubble";
 
 export function ChatBubble({ bubble }: { bubble: Bubble }) {
   switch (bubble.kind) {
@@ -28,5 +30,7 @@ export function ChatBubble({ bubble }: { bubble: Bubble }) {
       return <ErrorBubble bubble={bubble} />;
     case "system":
       return <SystemBubble bubble={bubble} />;
+    case "approval":
+      return <ApprovalBubble bubble={bubble} />;
   }
 }

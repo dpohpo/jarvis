@@ -29,6 +29,13 @@ export const TaskEventKind = z.enum([
   "progress",
   "done",
   "error",
+  // Phase 15-v10: daemon emits this when a task needs user approval.
+  // data is JSON: { reqId, summary, detail, tier, timeoutSec }.
+  // Same content as PermRequest, but travels through task.event so the
+  // chat surface can render an inline approval card alongside the task
+  // timeline (the modal popup from perm.request is still sent in parallel
+  // for strong-notice; users can approve from either place).
+  "approval",
 ]);
 
 /** Daemon → phone: streamed task lifecycle. `output` chunks are batched (~100ms / 2KB). */

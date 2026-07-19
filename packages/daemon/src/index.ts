@@ -225,7 +225,11 @@ async function speakTo(
       durationMs: wavDurationMs(wav),
       expectReply: opts?.expectReply ?? false,
     });
-    const CHUNK = 48 * 1024;
+    // Phase 15-v10 P1-1: smaller chunks (16KB) so the first audio segment
+    // arrives at the phone ~3x sooner. Total bytes unchanged; only the
+    // per-chunk size is smaller, which trades a small protocol overhead
+    // for lower time-to-first-audio.
+    const CHUNK = 16 * 1024;
     let seq = 0;
     for (let off = 0; off < wav.length; off += CHUNK) {
       seq += 1;
@@ -532,11 +536,44 @@ function taskSummaries(): TaskSummary[] {
   return store.list().map((t) => ({
     taskId: t.taskId,
     status: t.status,
-    title: t.title,
+    // Phase 15-v11: do NOT ship the raw task title (which is the first
+    // 120 chars of the user's instruction) to the phone. Legacy app
+    // versions use TaskSummary.title as the agent id, which means the
+    // instruction text leaked into the sidebar as a clickable "agent"
+    // and poisoned currentAgentId when tapped. Replace it with a short,
+    // obviously-not-an-agent label. The real instruction text still
+    // exists in the daemon's sqlite (tasks.title column) for local
+    // debugging via the admin /status endpoint if anyone needs it.
+    title: `task-${t.taskId.slice(-6)}`,
     workdir: t.workdir,
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   }));
+}
+
+/**
+ * Heuristic for commands that don't need brain (GLM) cleanup.
+ *
+ * Brain costs ~2-5s round-trip per call. For obviously-shell-shaped or
+ * short English commands there's nothing to clean — skip it. The text
+ * still flows through classifyCommand downstream, so Tier 3 patterns
+ * (rm -rf, sudo, send-to-wechat, etc) still gate normally.
+ *
+ * Match: short ASCII text that either
+ *   - starts with a known shell command word (git/npm/curl/...), or
+ *   - is <12 chars and pure ASCII with no Chinese intent verbs.
+ *
+ * Conservative on purpose: better to over-route to brain (slower but
+ * correct) than to skip cleanup on a request that actually needed it.
+ */
+const SHELL_STARTER = /^\s*(git|ls|pwd|cd|cat|echo|npm|pnpm|yarn|node|python|python3|curl|wget|find|grep|rg|sed|awk|head|tail|mkdir|touch|cp|mv|rm|chmod|chown|ssh|scp|tar|zip|unzip|brew|code|open|docker|kubectl|make|gcc|cargo|go|rustc|pip|uv|venva|export|env|which|file|stat|du|df|ps|top|kill|nohup|lsof|netstat|ifconfig|ping|host|dig|whoami|id|uname|date|time|history)\b/;
+const CN_INTENT_VERBS = /(创建|修改|删除|发送|发给|发到|调用|运行|打开|关闭|安装|卸载|查询|搜索|生成|编写|写一个|做一个|帮我|请|能不|可不可|怎么|如何|什么|为什么|是不是|对不对)/;
+
+function isSimpleCommand(t: string): boolean {
+  if (!t) return false;
+  if (SHELL_STARTER.test(t)) return true;
+  // Pure ASCII + short + no Chinese verbs → likely a literal command.
+  return /^[\x00-\x7F]+$/.test(t) && t.length < 12 && !CN_INTENT_VERBS.test(t);
 }
 
 async function runOneCmd(item: QueueItem): Promise<void> {
@@ -557,9 +594,14 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   // domain term correction (e.g. user-specific jargon, project names).
   // Slash commands (text starting with /) bypass the brain entirely —
   // those are pure client-control signals handled by handleSlash().
+  //
+  // Phase 15-v10 P0-2: skip brain for obviously-shell-shaped or short
+  // ASCII commands. Brain costs ~2-5s per call and adds nothing for
+  // `git status` / `ls -la` / `pwd`. The text still goes through the
+  // Tier classifier downstream, so dangerous patterns still gate.
   let finalText = text;
-  let brainShortCircuit: null | { reply: string; expectReply: boolean } = null;
-  if (!text.trim().startsWith("/")) {
+  let wentThroughBrain = false;
+  if (!text.trim().startsWith("/") && !isSimpleCommand(text.trim())) {
     const history = chatHistory.get(sk) ?? [];
     try {
       const decision = await route(text, history);
@@ -583,47 +625,14 @@ async function runOneCmd(item: QueueItem): Promise<void> {
         return;
       }
 
-      // task: show cleaned prompt to user for confirmation BEFORE executing.
-      // The brain cleaned the raw ASR/text into a self-contained instruction.
-      // We send it to the phone as a perm.request so the user sees exactly
-      // what will be dispatched to Claude Code and can approve or reject.
+      // task: brain cleaned the raw ASR/text into a self-contained instruction.
       finalText = decision.task || text;
+      wentThroughBrain = true;
       remember(sk, "assistant", decision.reply || "好的。");
       if (opts?.voiceReply && decision.reply) {
         void speakTo(from, decision.reply);
       }
-
-      // --- confirmation gate (always, for brain-routed tasks) ---
-      store.create(taskId, finalText.slice(0, 120), wd);
-      store.setStatus(taskId, "waiting_approval");
-      const confirmReqId = ulid();
-      const confirmSummary = `确认执行：${finalText.slice(0, 120)}`;
-      sendTo(from, {
-        t: "perm.request", seq: 0,
-        reqId: confirmReqId, taskId,
-        tier: 3,
-        summary: confirmSummary,
-        detail: finalText,
-        timeoutSec: 120,
-        onTimeout: "deny",
-      });
-      // Also TTS-speak the cleaned prompt so voice users hear it.
-      void speakTo(from, `我理解你要：${finalText.slice(0, 200)}。确认执行吗？`, { expectReply: true });
-
-      const userConfirmed = await approvals.wait(confirmReqId, 120);
-      if (!userConfirmed) {
-        store.setStatus(taskId, "error");
-        store.addEvent(taskId, "error", "任务未确认，已取消。");
-        sendTo(from, {
-          t: "task.event", seq: 0, taskId, cmdId,
-          ev: "error", data: "任务未确认，已取消。", ts: Date.now(),
-        });
-        if (opts?.voiceReply) void speakTo(from, "好的，取消执行。");
-        return;
-      }
-      // User approved — proceed to classifyCommand + execute.
-      store.setStatus(taskId, "running");
-      // --- end confirmation gate ---
+      // Brain succeeded — fall through to unified approval gate below.
     } catch (e) {
       log(`brain route failed, falling back to direct task: ${String(e)}`);
       // Don't remember or short-circuit — fall through to direct execution.
@@ -631,8 +640,6 @@ async function runOneCmd(item: QueueItem): Promise<void> {
   }
 
   const verdict = classifyCommand(finalText, wd);
-  // Task may already exist if the confirmation gate created it above.
-  // Wrap in try/catch to avoid UNIQUE constraint crash.
   try { store.create(taskId, finalText.slice(0, 120), wd); } catch { /* already created */ }
   log(`cmd ${cmdId} → task ${taskId} (tier ${verdict.tier}: ${verdict.reason})`);
 
@@ -641,22 +648,43 @@ async function runOneCmd(item: QueueItem): Promise<void> {
     sendTo(from, { t: "task.event", seq: 0, taskId, cmdId, ev: ev as never, data, ts: Date.now() });
   };
 
-  if (verdict.tier === 3) {
+  // Phase 15-v11 unified approval gate:
+  // v10 over-corrected — removing the "always confirm" gate left users with
+  // NO approval for any task (even long Chinese ones), which felt like
+  // Jarvis was running things without consent. v11 restores a SINGLE
+  // approval round-trip for any task the brain cleaned (so the user can
+  // verify the cleaned instruction), AND keeps the dual-approval fix by
+  // folding Tier 3 danger reasoning into the SAME approval (no second
+  // round). Net result:
+  //   - brain-routed task → 1 approval (summary shows cleaned instruction,
+  //     plus danger reason if Tier 3)
+  //   - isSimpleCommand short-circuit (ls/git status/...) → Tier classifier
+  //     only; Tier 1/2 run directly, Tier 3 still gates once
+  const needsApproval = wentThroughBrain || verdict.tier === 3;
+  if (needsApproval) {
     const reqId = ulid();
     store.setStatus(taskId, "waiting_approval");
-    emit("progress", `等待审批: ${verdict.reason}`);
+    const isDanger = verdict.tier === 3;
+    const summary = isDanger
+      ? `[需审批·Tier 3] ${verdict.reason}\n${finalText.slice(0, 100)}`
+      : `确认执行：${finalText.slice(0, 120)}`;
+    const detail = `完整指令: ${finalText}\n工作目录: ${wd}${isDanger ? `\n⚠ 危险原因: ${verdict.reason}` : ""}`;
+    // Schema only allows tier 2 or 3 (not 1). Use 3 for real Tier 3 hits,
+    // 2 for the "brain cleaned, please confirm" case — phone treats both
+    // as approval-required but Tier 3 can render with stronger emphasis.
     sendTo(from, {
       t: "perm.request",
       seq: 0,
       reqId,
       taskId,
-      tier: 3,
-      summary: text.slice(0, 80),
-      detail: `原因: ${verdict.reason}\n完整指令: ${text}\n工作目录: ${wd}`,
-      timeoutSec: 300,
+      tier: isDanger ? 3 : 2,
+      summary,
+      detail,
+      timeoutSec: 120,
       onTimeout: "deny",
     });
-    const allowed = await approvals.wait(reqId, 300);
+    emit("approval", JSON.stringify({ reqId, summary, detail, tier: isDanger ? 3 : 2, timeoutSec: 120 }));
+    const allowed = await approvals.wait(reqId, 120);
     if (!allowed) {
       store.setStatus(taskId, "paused");
       emit("error", "审批被拒绝或超时（默认拒绝）。任务已暂停。");
@@ -842,13 +870,28 @@ const admin = createServer((req, res) => {
     return;
   }
   if (req.url === "/status") {
+    log(`[admin] /status poll from ${req.socket.remoteAddress}`);
+    // Admin endpoint is local-only (127.0.0.1) and for developer eyes,
+    // so we ship the raw task title (the user's instruction prefix) for
+    // debuggability — not the sanitized "task-XXXX" placeholder that
+    // taskSummaries() emits for the phone wire protocol.
+    const rawTasks = store.list().slice(0, 10).map((t) => ({
+      taskId: t.taskId,
+      status: t.status,
+      title: t.title,
+      workdir: t.workdir,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    }));
     res.end(
       JSON.stringify({
         deviceId: state.deviceId,
         room: room.slice(0, 8) + "…",
         relayUp: relay.isUp,
         devices: state.devices.map((d) => ({ id: d.deviceId, name: d.name })),
-        tasks: taskSummaries().slice(0, 10),
+        tasks: rawTasks,
+        activeWorkspace: state.workdir ?? "",
+        workspaces: state.workdir ? [state.workdir] : [],
       }),
     );
     return;

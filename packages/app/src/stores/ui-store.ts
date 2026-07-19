@@ -32,6 +32,10 @@ interface UiState {
   agentStatusOpen: boolean;       // 5.jpg
   attachMenuOpen: boolean;        // 3.2.jpg (Composer + button)
   permRequest: { reqId: string; tier: number; summary: string; detail: string } | null;
+  /** Function registered by useJarvis on mount so deep components
+   *  (ApprovalBubble in chat surface) can call respondPermission
+   *  without prop drilling. Null until useJarvis initializes. */
+  respondPermission: ((reqId: string, allow: boolean) => void) | null;
   setDrawerOpen: (v: boolean) => void;
   setProviderPickerOpen: (v: boolean) => void;
   setSessionPickerOpen: (v: boolean) => void;
@@ -42,6 +46,7 @@ interface UiState {
   setAgentStatusOpen: (v: boolean) => void;
   setAttachMenuOpen: (v: boolean) => void;
   setPermRequest: (r: UiState["permRequest"]) => void;
+  setRespondPermission: (fn: ((reqId: string, allow: boolean) => void) | null) => void;
   closeAll: () => void;
 }
 
@@ -56,6 +61,7 @@ export const useUiStore = create<UiState>((set) => ({
   agentStatusOpen: false,
   attachMenuOpen: false,
   permRequest: null,
+  respondPermission: null,
   setDrawerOpen: (v) => set({ drawerOpen: v }),
   setProviderPickerOpen: (v) => set({ providerPickerOpen: v }),
   setSessionPickerOpen: (v) => set({ sessionPickerOpen: v }),
@@ -66,6 +72,7 @@ export const useUiStore = create<UiState>((set) => ({
   setAgentStatusOpen: (v) => set({ agentStatusOpen: v }),
   setAttachMenuOpen: (v) => set({ attachMenuOpen: v }),
   setPermRequest: (r) => set({ permRequest: r }),
+  setRespondPermission: (fn) => set({ respondPermission: fn }),
   closeAll: () =>
     set({
       drawerOpen: false,

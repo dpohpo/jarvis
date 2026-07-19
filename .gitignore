@@ -14,3 +14,9 @@ packages/app/.expo/
 dist-apk/
 ._*
 .claude/*.lock
+
+# CodeGraph local index
+.codegraph/
+
+# Runtime crash logs
+packages/daemon/amp

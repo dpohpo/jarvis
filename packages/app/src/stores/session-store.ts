@@ -12,11 +12,28 @@
 import { create } from "zustand";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+/** Inline approval card payload. Daemon sends this via task.event ev:"approval"
+ *  alongside the legacy perm.request modal. The chat surface renders an
+ *  ApprovalBubble from this; tapping Approve/Deny calls respondPermission
+ *  with the embedded reqId (same id the modal uses). */
+export interface ApprovalPayload {
+  reqId: string;
+  summary: string;
+  detail: string;
+  tier: 2 | 3;
+  timeoutSec: number;
+  /** Resolved locally when the user taps a button — drives the "✅ 已批准" /
+   *  "❌ 已拒绝" footer and disables further taps. */
+  resolved?: "allow" | "deny";
+}
+
 export interface Bubble {
   id: string;
-  kind: "user" | "assistant" | "tool" | "error" | "system" | "local";
+  kind: "user" | "assistant" | "tool" | "error" | "system" | "local" | "approval";
   text: string;
   ts: number;
+  /** Only present when kind === "approval". */
+  approval?: ApprovalPayload;
 }
 
 interface SessionState {

@@ -153,21 +153,19 @@ export async function route(
     { role: "user", content: transcript },
   ];
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = await callGlm(messages);
-    const candidate = extractJson(raw);
-    try {
-      const parsed = Decision.safeParse(JSON.parse(candidate));
-      if (parsed.success) return parsed.data;
-    } catch {
-      // fall through to retry
-    }
-    messages.push({ role: "assistant", content: raw });
-    messages.push({
-      role: "user",
-      content: "你的输出不是合法 JSON。只输出 {\"action\":...,\"reply\":...,\"task\":...}",
-    });
+  // Phase 15-v10 P0-3: single-shot. Previously this looped twice on bad
+  // JSON, which meant a +800/1600ms backoff retry that rarely succeeded —
+  // when GLM emits non-JSON it's almost always upstream throttling, not
+  // prompt confusion. Fail fast and let the caller fall back to direct
+  // task dispatch (which the surrounding try/catch in runOneCmd already
+  // handles).
+  const raw = await callGlm(messages);
+  const candidate = extractJson(raw);
+  try {
+    const parsed = Decision.safeParse(JSON.parse(candidate));
+    if (parsed.success) return parsed.data;
+  } catch {
+    // fall through to fallback
   }
-  // brain unreachable/incoherent — degrade to direct task dispatch (old D1 path)
   return { action: "task", task: transcript, reply: "好的。", workspace: "" };
 }

@@ -91,6 +91,22 @@ export function useJarvis(state: PhoneState) {
         }
         else if (e.ev === "error") push({ kind: "error", text: e.data });
         else if (e.ev === "tool_use") push({ kind: "tool", text: `⚙ ${e.data}` });
+        else if (e.ev === "approval") {
+          // Phase 15-v10: daemon emits this in parallel with perm.request.
+          // data is JSON: { reqId, summary, detail, tier, timeoutSec }.
+          // Render an inline ApprovalBubble in the chat surface; the modal
+          // popup (from perm.request via onPermRequest below) still shows
+          // too — user can approve from either side.
+          try {
+            const ap = JSON.parse(e.data) as {
+              reqId: string; summary: string; detail: string;
+              tier: 2 | 3; timeoutSec: number;
+            };
+            push({ kind: "approval", text: ap.summary, approval: ap });
+          } catch {
+            push({ kind: "system", text: `[审批] ${e.data.slice(0, 200)}` });
+          }
+        }
         else if (e.ev === "progress") push({ kind: "system", text: e.data });
         if (e.ev === "started") setBusy(true);
         else if (e.ev === "done" || e.ev === "error") {
@@ -110,23 +126,47 @@ export function useJarvis(state: PhoneState) {
         }
       },
       onTaskState: (tasks) => {
-        // Use t.title as agent id (NOT t.taskId). taskId is a per-spawn
-        // ulid that changes every time the daemon re-emits task.state —
-        // if we used it as AsyncStorage key, the phone would never find
-        // previously-saved chat lines after an app restart. title is the
-        // human-readable agent/workspace name which stays stable across
-        // daemon restarts, so AsyncStorage key = title → chat history
-        // survives.
-        const agents: Agent[] = tasks.map((t) => ({
-          id: t.title,
-          title: t.title,
-          status: mapDaemonStatus(t.status),
-        }));
-        useWorkspaceStore.getState().setAgents(agents);
+        // Phase 15-v11: this used to call setAgents(tasks.map(t => ({ id:
+        // t.title, ... }))). That was a serious architectural bug —
+        // t.title is the FIRST 120 CHARS OF THE USER'S INSTRUCTION (set
+        // by daemon's store.create(taskId, finalText.slice(0,120), wd)),
+        // not an agent identifier. Treating it as agent id had two nasty
+        // consequences:
+        //
+        //   1. Sidebar filled with phantom "agents" whose names were
+        //      actually command prefixes ("帮我完成以下任务：1.", "请帮我
+        //      统计桌面（~/Desktop）上...", etc).
+        //   2. When the user tapped one, currentAgentId became that text.
+        //      Every subsequent submitCommand encoded the text into cmdId
+        //      (`${agentId}::suffix`), and daemon round-tripped it back.
+        //      The phone then routed task.event replies to agentId =
+        //      "<command text>" — a session with no real chat history.
+        //      From the user's POV: messages vanished, "聊天记录老不翼
+        //      而飞".
+        //
+        // Long-term fix: add a sessionId/agentId field to daemon's
+        // TaskSummary (sourced from cmdId prefix), then we can map tasks
+        // → agents correctly here. Until then, NO-OP — task progress is
+        // still visible via task.event (started/done/error → busy banner
+        // + chat bubbles), just not in the sidebar.
+        //
+        // Intentionally empty.
+        void tasks;
       },
     });
     client.current = c;
     c.start();
+
+    // Phase 15-v10: register respondPermission on the UI store so deep
+    // components (ApprovalBubble inside ChatSurface → ChatBubble) can
+    // invoke it without prop drilling. Inline definition keeps the
+    // closure over `c` and `pushLine` fresh for the lifetime of this
+    // client; on teardown we clear it so a stale client is never called.
+    useUiStore.getState().setRespondPermission((reqId: string, allow: boolean) => {
+      c.respondPermission(reqId, allow);
+      useUiStore.getState().setPermRequest(null);
+      pushLine({ kind: "system", text: allow ? "✅ 已批准" : "❌ 已拒绝" });
+    });
 
     // Session recovery: as soon as the link comes up, pull the daemon's
     // current task list so the sidebar / session picker reflects what's
@@ -154,6 +194,7 @@ export function useJarvis(state: PhoneState) {
 
     return () => {
       cancelled = true;
+      useUiStore.getState().setRespondPermission(null);
       c.stop();
       client.current = null;
     };
@@ -278,9 +319,12 @@ export function useJarvis(state: PhoneState) {
   };
 
   // ----- permission flow -----
+  // Delegates to the function registered on the UI store by the effect
+  // above. This keeps PermissionModal and inline ApprovalBubble going
+  // through the exact same code path (one source of truth for the
+  // pushLine feedback + perm.response send + modal dismiss).
   const respondPermission = (reqId: string, allow: boolean) => {
-    client.current?.respondPermission(reqId, allow);
-    useUiStore.getState().setPermRequest(null);
+    useUiStore.getState().respondPermission?.(reqId, allow);
   };
 
   // ----- session switch -----
